@@ -1,0 +1,8 @@
+namespace ImperiosEnGuerra.Modelo
+{
+    public enum TipoRecurso
+    {
+        Oro,
+        Madera
+    }
+}

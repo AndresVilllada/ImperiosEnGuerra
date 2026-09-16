@@ -1,0 +1,7 @@
+namespace ImperiosEnGuerra.Modelo
+{
+    public class Mapa
+    {
+        
+    }
+}

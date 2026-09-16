@@ -1,17 +1,43 @@
-namespace ImperiosEnGuerra.Modelo;
+using System.Collections.Generic;
 
-public class Jugador
+namespace ImperiosEnGuerra.Modelo
 {
-    public string Nombre { get; set; }
-    public int Oro { get; set; }
-    public int Madera { get; set; }
-    public int Comida { get; set; }
-
-    public Jugador(string nombre)
+    public class Jugador
     {
-        Nombre = nombre;
-        Oro = 100;
-        Madera = 100;
-        Comida = 100;
+        public string Nombre { get; private set; }
+        public Mapa Mapa { get; private set; }
+        public Dictionary<TipoRecurso, int> Recursos { get; private set; }
+        public List<Unidad> Unidades { get; private set; }
+        public List<Edificio> Edificios { get; private set; }
+
+        public Jugador(string nombre, Mapa mapa)
+        {
+            Nombre = nombre;
+            Mapa = mapa;
+
+            Recursos = new Dictionary<TipoRecurso, int>
+            {
+                { TipoRecurso.Oro, 100 },
+                { TipoRecurso.Madera, 100 }
+            };
+
+            Unidades = new List<Unidad>();
+            Edificios = new List<Edificio>();
+        }
+
+        public void AgregarRecurso(TipoRecurso tipo, int cantidad)
+        {
+            Recursos[tipo] += cantidad;
+        }
+
+        public bool TieneRecursosSuficientes(Dictionary<TipoRecurso, int> costo)
+        {
+            foreach (var par in costo)
+            {
+                if (!Recursos.ContainsKey(par.Key) || Recursos[par.Key] < par.Value)
+                    return false;
+            }
+            return true;
+        }
     }
 }
