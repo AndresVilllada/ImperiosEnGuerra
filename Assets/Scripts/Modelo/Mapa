@@ -1,7 +1,84 @@
+using System.Collections.Concurrent;
+
 namespace ImperiosEnGuerra.Modelo
 {
+    public enum TipoCelda
+    {
+        Libre,
+        Recurso,
+        Edificio,
+        Unidad
+    }
+
     public class Mapa
     {
-        
+        public int Ancho { get; private set; }
+        public int Alto { get; private set; }
+
+        private TipoCelda[,] celdas;
+        private readonly object candadoCeldas = new object();
+        private ConcurrentDictionary<(int x, int y), Recurso> recursosEnMapa;
+
+        public Mapa(int ancho = 15, int alto = 15)
+        {
+            Ancho = ancho;
+            Alto = alto;
+            celdas = new TipoCelda[ancho, alto];
+            recursosEnMapa = new ConcurrentDictionary<(int, int), Recurso>();
+        }
+
+        public bool EstaDentroDelMapa(int x, int y)
+        {
+            return x >= 0 && x < Ancho && y >= 0 && y < Alto;
+        }
+
+        public bool CeldaLibre(int x, int y)
+        {
+            lock (candadoCeldas)
+            {
+                return EstaDentroDelMapa(x, y) && celdas[x, y] == TipoCelda.Libre;
+            }
+        }
+
+        public TipoCelda ObtenerTipoCelda(int x, int y)
+        {
+            lock (candadoCeldas)
+            {
+                return EstaDentroDelMapa(x, y) ? celdas[x, y] : TipoCelda.Libre;
+            }
+        }
+
+        public void MarcarCelda(int x, int y, TipoCelda tipo)
+        {
+            lock (candadoCeldas)
+            {
+                if (EstaDentroDelMapa(x, y))
+                {
+                    celdas[x, y] = tipo;
+                }
+            }
+        }
+
+        public void ColocarRecurso(int x, int y, Recurso recurso)
+        {
+            if (!EstaDentroDelMapa(x, y)) return;
+
+            recursosEnMapa[(x, y)] = recurso;
+            MarcarCelda(x, y, TipoCelda.Recurso);
+        }
+
+        public Recurso ObtenerRecurso(int x, int y)
+        {
+            recursosEnMapa.TryGetValue((x, y), out var recurso);
+            return recurso;
+        }
+
+        public void LiberarCelda(int x, int y)
+        {
+            if (!EstaDentroDelMapa(x, y)) return;
+
+            recursosEnMapa.TryRemove((x, y), out _);
+            MarcarCelda(x, y, TipoCelda.Libre);
+        }
     }
 }

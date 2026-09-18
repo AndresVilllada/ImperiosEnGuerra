@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 
 namespace ImperiosEnGuerra.Modelo
 {
@@ -6,7 +7,7 @@ namespace ImperiosEnGuerra.Modelo
     {
         public string Nombre { get; private set; }
         public Mapa Mapa { get; private set; }
-        public Dictionary<TipoRecurso, int> Recursos { get; private set; }
+        public ConcurrentDictionary<TipoRecurso, int> Recursos { get; private set; }
         public List<Unidad> Unidades { get; private set; }
         public List<Edificio> Edificios { get; private set; }
 
@@ -15,11 +16,9 @@ namespace ImperiosEnGuerra.Modelo
             Nombre = nombre;
             Mapa = mapa;
 
-            Recursos = new Dictionary<TipoRecurso, int>
-            {
-                { TipoRecurso.Oro, 100 },
-                { TipoRecurso.Madera, 100 }
-            };
+            Recursos = new ConcurrentDictionary<TipoRecurso, int>();
+            Recursos[TipoRecurso.Oro] = 100;
+            Recursos[TipoRecurso.Madera] = 100;
 
             Unidades = new List<Unidad>();
             Edificios = new List<Edificio>();
@@ -27,7 +26,7 @@ namespace ImperiosEnGuerra.Modelo
 
         public void AgregarRecurso(TipoRecurso tipo, int cantidad)
         {
-            Recursos[tipo] += cantidad;
+            Recursos.AddOrUpdate(tipo, cantidad, (clave, valorActual) => valorActual + cantidad);
         }
 
         public bool TieneRecursosSuficientes(Dictionary<TipoRecurso, int> costo)

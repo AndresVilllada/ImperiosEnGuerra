@@ -1,0 +1,33 @@
+namespace ImperiosEnGuerra.Modelo
+{
+    public class Recurso
+    {
+        public TipoRecurso Tipo { get; private set; }
+        public int Cantidad { get; private set; }
+        private readonly object candado = new object(); // objeto dedicado solo para el lock
+
+        public Recurso(TipoRecurso tipo, int cantidadInicial)
+        {
+            Tipo = tipo;
+            Cantidad = cantidadInicial;
+        }
+
+        public int Extraer(int cantidadSolicitada)
+        {
+            lock (candado)
+            {
+                int extraido = cantidadSolicitada > Cantidad ? Cantidad : cantidadSolicitada;
+                Cantidad -= extraido;
+                return extraido;
+            }
+        }
+
+        public bool EstaAgotado()
+        {
+            lock (candado)
+            {
+                return Cantidad <= 0;
+            }
+        }
+    }
+}
