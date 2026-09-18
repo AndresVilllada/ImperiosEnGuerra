@@ -1,7 +1,154 @@
+using System;
+using System.Collections.Generic;
+
 namespace ImperiosEnGuerra.Modelo
 {
-    public class Unidad
+    // Coordenada dentro de la matriz del mapa. Si en Mapa.cs ya definiste algo
+    // equivalente, avisa y dejamos uno solo (para evitar choques en el merge).
+    public struct Posicion : IEquatable<Posicion>
     {
-        
+        public int X { get; }
+        public int Y { get; }
+
+        public Posicion(int x, int y)
+        {
+            X = x;
+            Y = y;
+        }
+
+        // Distancia en casillas (sin diagonales), útil para validar RangoAtaque.
+        public int DistanciaManhattanHasta(Posicion otra) => Math.Abs(X - otra.X) + Math.Abs(Y - otra.Y);
+
+        public bool Equals(Posicion otra) => X == otra.X && Y == otra.Y;
+        public override bool Equals(object obj) => obj is Posicion otra && Equals(otra);
+        public override int GetHashCode() => HashCode.Combine(X, Y);
+        public override string ToString() => $"({X},{Y})";
+
+        public static bool operator ==(Posicion a, Posicion b) => a.Equals(b);
+        public static bool operator !=(Posicion a, Posicion b) => !a.Equals(b);
+    }
+
+    // Cualquier cosa que una Tropa pueda atacar (una Unidad o un Edificio).
+    // Gracias a esta interfaz, Atacar() no necesita dos versiones distintas.
+    public interface IObjetivoAtacable
+    {
+        Posicion Posicion { get; }
+        bool EstaDestruido { get; }
+        void RecibirDanio(int cantidad);
+    }
+
+    // Clase base de toda unidad (aldeano o militar). Dato puro, sin lógica de
+    // Unity: la Vista lee estas propiedades para dibujar el GameObject; el
+    // Controlador es quien decide CUÁNDO se mueve, ataca o recibe daño.
+    public abstract class Unidad : IObjetivoAtacable
+    {
+        public Guid Id { get; }
+        public string Nombre { get; protected set; }
+        public Posicion Posicion { get; private set; }
+        public int VidaMaxima { get; protected set; }
+        public int VidaActual { get; private set; }
+        public bool EstaViva => VidaActual > 0;
+        public bool EstaDestruido => !EstaViva; // para cumplir IObjetivoAtacable
+
+        // Costo en recursos para entrenar esta unidad. Cada subclase lo define
+        // en su constructor; así AccionController puede validar/descontar sin
+        // tener que hardcodear el costo de cada tipo por fuera del Modelo.
+        public IReadOnlyDictionary<TipoRecurso, int> Costo { get; protected set; }
+
+        protected Unidad(string nombre, Posicion posicion, int vidaMaxima, IReadOnlyDictionary<TipoRecurso, int> costo)
+        {
+            if (vidaMaxima <= 0) throw new ArgumentException("VidaMaxima debe ser mayor que cero.", nameof(vidaMaxima));
+
+            Id = Guid.NewGuid();
+            Nombre = nombre;
+            Posicion = posicion;
+            VidaMaxima = vidaMaxima;
+            VidaActual = vidaMaxima;
+            Costo = costo ?? new Dictionary<TipoRecurso, int>();
+        }
+
+        public void RecibirDanio(int cantidad)
+        {
+            if (cantidad < 0) throw new ArgumentException("El daño no puede ser negativo.", nameof(cantidad));
+            VidaActual = Math.Max(0, VidaActual - cantidad);
+        }
+
+        public void Curar(int cantidad)
+        {
+            if (cantidad < 0) throw new ArgumentException("La curación no puede ser negativa.", nameof(cantidad));
+            if (!EstaViva) return; // una unidad muerta no se revive curándola
+            VidaActual = Math.Min(VidaMaxima, VidaActual + cantidad);
+        }
+
+        // El Controlador valida antes (coordenadas dentro del mapa, celda libre);
+        // esta clase solo aplica el cambio si la unidad sigue viva.
+        public virtual void MoverA(Posicion nuevaPosicion)
+        {
+            if (!EstaViva) return;
+            Posicion = nuevaPosicion;
+        }
+
+        public override string ToString() => $"{Nombre} [{(EstaViva ? $"{VidaActual}/{VidaMaxima} HP" : "muerta")}] en {Posicion}";
+    }
+
+    // Aldeano: recolecta recursos y construye edificios. No tiene ataque.
+    public class Villager : Unidad
+    {
+        public int VelocidadRecoleccion { get; }
+
+        public Villager(Posicion posicion, int velocidadRecoleccion = 5)
+            : base("Aldeano", posicion, vidaMaxima: 25, costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Madera, 40 } })
+        {
+            if (velocidadRecoleccion <= 0) throw new ArgumentException("VelocidadRecoleccion debe ser mayor que cero.");
+            VelocidadRecoleccion = velocidadRecoleccion;
+        }
+    }
+
+    // Clase base de toda unidad militar. Se compra por lotes de 5 en el Taller (con Oro).
+    public abstract class Tropa : Unidad
+    {
+        public int DanioAtaque { get; protected set; }
+        public int RangoAtaque { get; protected set; } // 1 = cuerpo a cuerpo
+
+        protected Tropa(string nombre, Posicion posicion, int vidaMaxima, int danioAtaque, int rangoAtaque, IReadOnlyDictionary<TipoRecurso, int> costo)
+            : base(nombre, posicion, vidaMaxima, costo)
+        {
+            if (danioAtaque < 0) throw new ArgumentException("DanioAtaque no puede ser negativo.");
+            if (rangoAtaque <= 0) throw new ArgumentException("RangoAtaque debe ser mayor que cero.");
+            DanioAtaque = danioAtaque;
+            RangoAtaque = rangoAtaque;
+        }
+
+        // Devuelve false sin hacer nada si: esta tropa ya murió, el objetivo ya
+        // estaba destruido, o el objetivo está fuera de rango. El Controlador
+        // decide qué hacer con el resultado (registrar en log, avisar por red, etc.).
+        public bool Atacar(IObjetivoAtacable objetivo)
+        {
+            if (!EstaViva || objetivo == null || objetivo.EstaDestruido) return false;
+            if (Posicion.DistanciaManhattanHasta(objetivo.Posicion) > RangoAtaque) return false;
+
+            objetivo.RecibirDanio(DanioAtaque);
+            return true;
+        }
+    }
+
+    // Tropa cuerpo a cuerpo básica de la Edad Media.
+    public class Espadachin : Tropa
+    {
+        public Espadachin(Posicion posicion)
+            : base("Espadachín", posicion, vidaMaxima: 50, danioAtaque: 10, rangoAtaque: 1,
+                   costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Oro, 30 } })
+        {
+        }
+    }
+
+    // Tropa a distancia de la Edad Media.
+    public class Ballestero : Tropa
+    {
+        public Ballestero(Posicion posicion)
+            : base("Ballestero", posicion, vidaMaxima: 35, danioAtaque: 14, rangoAtaque: 4,
+                   costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Oro, 35 } })
+        {
+        }
     }
 }

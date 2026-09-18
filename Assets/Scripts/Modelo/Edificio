@@ -1,7 +1,132 @@
+using System;
+using System.Collections.Generic;
+
 namespace ImperiosEnGuerra.Modelo
 {
-    public class Edificio
+    // Clase base de todo edificio. EstaConstruido pasa a true cuando el hilo
+    // de construcción (fase de concurrencia) termina su tiempo simulado, ya
+    // sea llamando SetConstruido() directamente o avanzando con AvanzarConstruccion().
+    public abstract class Edificio : IObjetivoAtacable
     {
+        public Guid Id { get; }
+        public string Nombre { get; protected set; }
+        public Posicion Posicion { get; }
+        public int VidaMaxima { get; protected set; }
+        public int VidaActual { get; private set; }
+        public bool EstaConstruido { get; private set; }
+        public int ProgresoConstruccion { get; private set; } // 0-100
+        public bool EstaDestruido => VidaActual <= 0;
 
+        // Costo en recursos para construir este edificio. Cada subclase lo
+        // define en su constructor, igual que Costo en Unidad.
+        public IReadOnlyDictionary<TipoRecurso, int> Costo { get; protected set; }
+
+        protected Edificio(string nombre, Posicion posicion, int vidaMaxima, IReadOnlyDictionary<TipoRecurso, int> costo, bool yaConstruido = false)
+        {
+            if (vidaMaxima <= 0) throw new ArgumentException("VidaMaxima debe ser mayor que cero.", nameof(vidaMaxima));
+
+            Id = Guid.NewGuid();
+            Nombre = nombre;
+            Posicion = posicion;
+            VidaMaxima = vidaMaxima;
+            VidaActual = vidaMaxima;
+            Costo = costo ?? new Dictionary<TipoRecurso, int>();
+
+            EstaConstruido = yaConstruido;
+            ProgresoConstruccion = yaConstruido ? 100 : 0;
+        }
+
+        public void RecibirDanio(int cantidad)
+        {
+            if (cantidad < 0) throw new ArgumentException("El daño no puede ser negativo.", nameof(cantidad));
+            VidaActual = Math.Max(0, VidaActual - cantidad);
+        }
+
+        // Llamado repetidamente por el hilo de construcción (ConstructorEdificios,
+        // fase de concurrencia) para ir reflejando el avance en la Vista.
+        public void AvanzarConstruccion(int incrementoPorcentaje)
+        {
+            if (EstaConstruido || incrementoPorcentaje < 0) return;
+
+            ProgresoConstruccion = Math.Min(100, ProgresoConstruccion + incrementoPorcentaje);
+            if (ProgresoConstruccion >= 100) EstaConstruido = true;
+        }
+
+        public override string ToString()
+        {
+            string estado = EstaDestruido ? "destruido"
+                : !EstaConstruido ? $"en construcción {ProgresoConstruccion}%"
+                : $"{VidaActual}/{VidaMaxima} HP";
+            return $"{Nombre} [{estado}] en {Posicion}";
+        }
+    }
+
+    // Centro Urbano: si se destruye, ese jugador pierde la partida. Existe
+    // desde el arranque de la partida (no se "construye" como los demás).
+    public class TownCenter : Edificio
+    {
+        public TownCenter(Posicion posicion)
+            : base("Centro Urbano", posicion, vidaMaxima: 500, costo: new Dictionary<TipoRecurso, int>(), yaConstruido: true)
+        {
+        }
+    }
+
+    // Casa: aumenta la población máxima disponible del jugador.
+    public class House : Edificio
+    {
+        public int PoblacionQueOtorga { get; }
+
+        public House(Posicion posicion, int poblacionQueOtorga = 5)
+            : base("Casa", posicion, vidaMaxima: 100, costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Madera, 80 } })
+        {
+            if (poblacionQueOtorga <= 0) throw new ArgumentException("PoblacionQueOtorga debe ser mayor que cero.");
+            PoblacionQueOtorga = poblacionQueOtorga;
+        }
+    }
+
+    // Taller: aquí se entrena el ejército (lotes de 5 tropas, pagadas en Oro
+    // aparte — ver Costo de cada Tropa en Unidad.cs).
+    public class Taller : Edificio
+    {
+        public Taller(Posicion posicion)
+            : base("Taller", posicion, vidaMaxima: 200, costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Madera, 120 } })
+        {
+        }
+    }
+
+    // Taller de Mejoras: sube estadísticas de las tropas (armas, vida, etc.).
+    public class TallerMejoras : Edificio
+    {
+        public TallerMejoras(Posicion posicion)
+            : base("Taller de Mejoras", posicion, vidaMaxima: 180, costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Madera, 150 } })
+        {
+        }
+    }
+
+    // Torre/muralla defensiva: a diferencia de los demás edificios, puede
+    // atacar por sí sola a las tropas rivales que entren en su rango.
+    public class Defensa : Edificio
+    {
+        public int DanioAtaque { get; }
+        public int RangoAtaque { get; }
+
+        public Defensa(Posicion posicion, int danioAtaque = 8, int rangoAtaque = 3)
+            : base("Defensa", posicion, vidaMaxima: 250, costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Madera, 100 } })
+        {
+            if (danioAtaque < 0) throw new ArgumentException("DanioAtaque no puede ser negativo.");
+            if (rangoAtaque <= 0) throw new ArgumentException("RangoAtaque debe ser mayor que cero.");
+            DanioAtaque = danioAtaque;
+            RangoAtaque = rangoAtaque;
+        }
+
+        // Igual que Tropa.Atacar: valida vida propia, objetivo y rango antes de aplicar daño.
+        public bool Atacar(IObjetivoAtacable objetivo)
+        {
+            if (EstaDestruido || !EstaConstruido || objetivo == null || objetivo.EstaDestruido) return false;
+            if (Posicion.DistanciaManhattanHasta(objetivo.Posicion) > RangoAtaque) return false;
+
+            objetivo.RecibirDanio(DanioAtaque);
+            return true;
+        }
     }
 }
