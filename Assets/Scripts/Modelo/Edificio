@@ -3,9 +3,6 @@ using System.Collections.Generic;
 
 namespace ImperiosEnGuerra.Modelo
 {
-    // Clase base de todo edificio. EstaConstruido pasa a true cuando el hilo
-    // de construcción (fase de concurrencia) termina su tiempo simulado, ya
-    // sea llamando SetConstruido() directamente o avanzando con AvanzarConstruccion().
     public abstract class Edificio : IObjetivoAtacable
     {
         public Guid Id { get; }
@@ -14,12 +11,11 @@ namespace ImperiosEnGuerra.Modelo
         public int VidaMaxima { get; protected set; }
         public int VidaActual { get; private set; }
         public bool EstaConstruido { get; private set; }
-        public int ProgresoConstruccion { get; private set; } // 0-100
+        public int ProgresoConstruccion { get; private set; }
         public bool EstaDestruido => VidaActual <= 0;
-
-        // Costo en recursos para construir este edificio. Cada subclase lo
-        // define en su constructor, igual que Costo en Unidad.
         public IReadOnlyDictionary<TipoRecurso, int> Costo { get; protected set; }
+
+        private readonly object candado = new object();
 
         protected Edificio(string nombre, Posicion posicion, int vidaMaxima, IReadOnlyDictionary<TipoRecurso, int> costo, bool yaConstruido = false)
         {
@@ -39,17 +35,21 @@ namespace ImperiosEnGuerra.Modelo
         public void RecibirDanio(int cantidad)
         {
             if (cantidad < 0) throw new ArgumentException("El daño no puede ser negativo.", nameof(cantidad));
-            VidaActual = Math.Max(0, VidaActual - cantidad);
+            lock (candado)
+            {
+                VidaActual = Math.Max(0, VidaActual - cantidad);
+            }
         }
 
-        // Llamado repetidamente por el hilo de construcción (ConstructorEdificios,
-        // fase de concurrencia) para ir reflejando el avance en la Vista.
         public void AvanzarConstruccion(int incrementoPorcentaje)
         {
-            if (EstaConstruido || incrementoPorcentaje < 0) return;
-
-            ProgresoConstruccion = Math.Min(100, ProgresoConstruccion + incrementoPorcentaje);
-            if (ProgresoConstruccion >= 100) EstaConstruido = true;
+            if (incrementoPorcentaje < 0) return;
+            lock (candado)
+            {
+                if (EstaConstruido) return;
+                ProgresoConstruccion = Math.Min(100, ProgresoConstruccion + incrementoPorcentaje);
+                if (ProgresoConstruccion >= 100) EstaConstruido = true;
+            }
         }
 
         public override string ToString()
@@ -61,8 +61,6 @@ namespace ImperiosEnGuerra.Modelo
         }
     }
 
-    // Centro Urbano: si se destruye, ese jugador pierde la partida. Existe
-    // desde el arranque de la partida (no se "construye" como los demás).
     public class TownCenter : Edificio
     {
         public TownCenter(Posicion posicion)
@@ -71,7 +69,6 @@ namespace ImperiosEnGuerra.Modelo
         }
     }
 
-    // Casa: aumenta la población máxima disponible del jugador.
     public class House : Edificio
     {
         public int PoblacionQueOtorga { get; }
@@ -84,8 +81,6 @@ namespace ImperiosEnGuerra.Modelo
         }
     }
 
-    // Taller: aquí se entrena el ejército (lotes de 5 tropas, pagadas en Oro
-    // aparte — ver Costo de cada Tropa en Unidad.cs).
     public class Taller : Edificio
     {
         public Taller(Posicion posicion)
@@ -94,7 +89,6 @@ namespace ImperiosEnGuerra.Modelo
         }
     }
 
-    // Taller de Mejoras: sube estadísticas de las tropas (armas, vida, etc.).
     public class TallerMejoras : Edificio
     {
         public TallerMejoras(Posicion posicion)
@@ -103,8 +97,6 @@ namespace ImperiosEnGuerra.Modelo
         }
     }
 
-    // Torre/muralla defensiva: a diferencia de los demás edificios, puede
-    // atacar por sí sola a las tropas rivales que entren en su rango.
     public class Defensa : Edificio
     {
         public int DanioAtaque { get; }
@@ -119,7 +111,6 @@ namespace ImperiosEnGuerra.Modelo
             RangoAtaque = rangoAtaque;
         }
 
-        // Igual que Tropa.Atacar: valida vida propia, objetivo y rango antes de aplicar daño.
         public bool Atacar(IObjetivoAtacable objetivo)
         {
             if (EstaDestruido || !EstaConstruido || objetivo == null || objetivo.EstaDestruido) return false;

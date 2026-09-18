@@ -3,8 +3,6 @@ using System.Collections.Generic;
 
 namespace ImperiosEnGuerra.Modelo
 {
-    // Coordenada dentro de la matriz del mapa. Si en Mapa.cs ya definiste algo
-    // equivalente, avisa y dejamos uno solo (para evitar choques en el merge).
     public struct Posicion : IEquatable<Posicion>
     {
         public int X { get; }
@@ -16,7 +14,6 @@ namespace ImperiosEnGuerra.Modelo
             Y = y;
         }
 
-        // Distancia en casillas (sin diagonales), útil para validar RangoAtaque.
         public int DistanciaManhattanHasta(Posicion otra) => Math.Abs(X - otra.X) + Math.Abs(Y - otra.Y);
 
         public bool Equals(Posicion otra) => X == otra.X && Y == otra.Y;
@@ -28,8 +25,6 @@ namespace ImperiosEnGuerra.Modelo
         public static bool operator !=(Posicion a, Posicion b) => !a.Equals(b);
     }
 
-    // Cualquier cosa que una Tropa pueda atacar (una Unidad o un Edificio).
-    // Gracias a esta interfaz, Atacar() no necesita dos versiones distintas.
     public interface IObjetivoAtacable
     {
         Posicion Posicion { get; }
@@ -37,9 +32,6 @@ namespace ImperiosEnGuerra.Modelo
         void RecibirDanio(int cantidad);
     }
 
-    // Clase base de toda unidad (aldeano o militar). Dato puro, sin lógica de
-    // Unity: la Vista lee estas propiedades para dibujar el GameObject; el
-    // Controlador es quien decide CUÁNDO se mueve, ataca o recibe daño.
     public abstract class Unidad : IObjetivoAtacable
     {
         public Guid Id { get; }
@@ -48,12 +40,12 @@ namespace ImperiosEnGuerra.Modelo
         public int VidaMaxima { get; protected set; }
         public int VidaActual { get; private set; }
         public bool EstaViva => VidaActual > 0;
-        public bool EstaDestruido => !EstaViva; // para cumplir IObjetivoAtacable
-
-        // Costo en recursos para entrenar esta unidad. Cada subclase lo define
-        // en su constructor; así AccionController puede validar/descontar sin
-        // tener que hardcodear el costo de cada tipo por fuera del Modelo.
+        public bool EstaDestruido => !EstaViva;
         public IReadOnlyDictionary<TipoRecurso, int> Costo { get; protected set; }
+
+        // Candado dedicado por instancia: protege VidaActual y Posicion, que
+        // pueden ser modificados por hilos distintos (combate, movimiento) a la vez.
+        private readonly object candado = new object();
 
         protected Unidad(string nombre, Posicion posicion, int vidaMaxima, IReadOnlyDictionary<TipoRecurso, int> costo)
         {
@@ -70,28 +62,34 @@ namespace ImperiosEnGuerra.Modelo
         public void RecibirDanio(int cantidad)
         {
             if (cantidad < 0) throw new ArgumentException("El daño no puede ser negativo.", nameof(cantidad));
-            VidaActual = Math.Max(0, VidaActual - cantidad);
+            lock (candado)
+            {
+                VidaActual = Math.Max(0, VidaActual - cantidad);
+            }
         }
 
         public void Curar(int cantidad)
         {
             if (cantidad < 0) throw new ArgumentException("La curación no puede ser negativa.", nameof(cantidad));
-            if (!EstaViva) return; // una unidad muerta no se revive curándola
-            VidaActual = Math.Min(VidaMaxima, VidaActual + cantidad);
+            lock (candado)
+            {
+                if (!EstaViva) return;
+                VidaActual = Math.Min(VidaMaxima, VidaActual + cantidad);
+            }
         }
 
-        // El Controlador valida antes (coordenadas dentro del mapa, celda libre);
-        // esta clase solo aplica el cambio si la unidad sigue viva.
         public virtual void MoverA(Posicion nuevaPosicion)
         {
-            if (!EstaViva) return;
-            Posicion = nuevaPosicion;
+            lock (candado)
+            {
+                if (!EstaViva) return;
+                Posicion = nuevaPosicion;
+            }
         }
 
         public override string ToString() => $"{Nombre} [{(EstaViva ? $"{VidaActual}/{VidaMaxima} HP" : "muerta")}] en {Posicion}";
     }
 
-    // Aldeano: recolecta recursos y construye edificios. No tiene ataque.
     public class Villager : Unidad
     {
         public int VelocidadRecoleccion { get; }
@@ -104,11 +102,10 @@ namespace ImperiosEnGuerra.Modelo
         }
     }
 
-    // Clase base de toda unidad militar. Se compra por lotes de 5 en el Taller (con Oro).
     public abstract class Tropa : Unidad
     {
         public int DanioAtaque { get; protected set; }
-        public int RangoAtaque { get; protected set; } // 1 = cuerpo a cuerpo
+        public int RangoAtaque { get; protected set; }
 
         protected Tropa(string nombre, Posicion posicion, int vidaMaxima, int danioAtaque, int rangoAtaque, IReadOnlyDictionary<TipoRecurso, int> costo)
             : base(nombre, posicion, vidaMaxima, costo)
@@ -119,9 +116,6 @@ namespace ImperiosEnGuerra.Modelo
             RangoAtaque = rangoAtaque;
         }
 
-        // Devuelve false sin hacer nada si: esta tropa ya murió, el objetivo ya
-        // estaba destruido, o el objetivo está fuera de rango. El Controlador
-        // decide qué hacer con el resultado (registrar en log, avisar por red, etc.).
         public bool Atacar(IObjetivoAtacable objetivo)
         {
             if (!EstaViva || objetivo == null || objetivo.EstaDestruido) return false;
@@ -132,7 +126,6 @@ namespace ImperiosEnGuerra.Modelo
         }
     }
 
-    // Tropa cuerpo a cuerpo básica de la Edad Media.
     public class Espadachin : Tropa
     {
         public Espadachin(Posicion posicion)
@@ -142,7 +135,6 @@ namespace ImperiosEnGuerra.Modelo
         }
     }
 
-    // Tropa a distancia de la Edad Media.
     public class Ballestero : Tropa
     {
         public Ballestero(Posicion posicion)

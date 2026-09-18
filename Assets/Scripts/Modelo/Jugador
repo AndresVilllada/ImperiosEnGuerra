@@ -1,15 +1,36 @@
+using System;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace ImperiosEnGuerra.Modelo
 {
+    // Evento simple que el Modelo deposita cuando algo relevante terminó en un
+    // hilo secundario. El Controlador los va sacando de la cola (TryDequeue) y
+    // decide qué mostrar en la Vista — el Modelo no sabe nada de la Vista.
+    public class EventoJuego
+    {
+        public string Tipo { get; }
+        public string Mensaje { get; }
+
+        public EventoJuego(string tipo, string mensaje)
+        {
+            Tipo = tipo;
+            Mensaje = mensaje;
+        }
+    }
+
     public class Jugador
     {
         public string Nombre { get; private set; }
         public Mapa Mapa { get; private set; }
         public ConcurrentDictionary<TipoRecurso, int> Recursos { get; private set; }
-        public List<Unidad> Unidades { get; private set; }
-        public List<Edificio> Edificios { get; private set; }
+        public ConcurrentDictionary<Guid, Unidad> Unidades { get; private set; }
+        public ConcurrentDictionary<Guid, Edificio> Edificios { get; private set; }
+        public ConcurrentQueue<EventoJuego> Eventos { get; private set; }
+
+        private readonly object candadoRecursos = new object();
 
         public Jugador(string nombre, Mapa mapa)
         {
@@ -20,8 +41,9 @@ namespace ImperiosEnGuerra.Modelo
             Recursos[TipoRecurso.Oro] = 100;
             Recursos[TipoRecurso.Madera] = 100;
 
-            Unidades = new List<Unidad>();
-            Edificios = new List<Edificio>();
+            Unidades = new ConcurrentDictionary<Guid, Unidad>();
+            Edificios = new ConcurrentDictionary<Guid, Edificio>();
+            Eventos = new ConcurrentQueue<EventoJuego>();
         }
 
         public void AgregarRecurso(TipoRecurso tipo, int cantidad)
@@ -29,7 +51,7 @@ namespace ImperiosEnGuerra.Modelo
             Recursos.AddOrUpdate(tipo, cantidad, (clave, valorActual) => valorActual + cantidad);
         }
 
-        public bool TieneRecursosSuficientes(Dictionary<TipoRecurso, int> costo)
+        public bool TieneRecursosSuficientes(IReadOnlyDictionary<TipoRecurso, int> costo)
         {
             foreach (var par in costo)
             {
@@ -37,6 +59,82 @@ namespace ImperiosEnGuerra.Modelo
                     return false;
             }
             return true;
+        }
+
+        public bool PagarCosto(IReadOnlyDictionary<TipoRecurso, int> costo)
+        {
+            lock (candadoRecursos)
+            {
+                if (!TieneRecursosSuficientes(costo)) return false;
+
+                foreach (var par in costo)
+                {
+                    Recursos[par.Key] -= par.Value;
+                }
+                return true;
+            }
+        }
+
+        public void AgregarUnidad(Unidad unidad) => Unidades[unidad.Id] = unidad;
+        public void RemoverUnidad(Unidad unidad) => Unidades.TryRemove(unidad.Id, out _);
+        public void AgregarEdificio(Edificio edificio) => Edificios[edificio.Id] = edificio;
+
+        public bool CentroUrbanoDestruido()
+        {
+            foreach (var edificio in Edificios.Values)
+            {
+                if (edificio is TownCenter) return edificio.EstaDestruido;
+            }
+            return true;
+        }
+
+        public bool TodasLasUnidadesMilitaresDestruidas()
+        {
+            bool tuvoAlgunaTropa = false;
+            foreach (var unidad in Unidades.Values)
+            {
+                if (unidad is Tropa)
+                {
+                    tuvoAlgunaTropa = true;
+                    if (unidad.EstaViva) return false;
+                }
+            }
+            return tuvoAlgunaTropa;
+        }
+
+        // Entrena un lote de tropas EN PARALELO: cada una corre en su propio
+        // Task.Run, simulando tiempo de entrenamiento, y solo se agrega al
+        // ejercito si logró pagar su costo. "fabricaTropa" recibe la posicion
+        // de spawn y devuelve la tropa concreta (Espadachin, Ballestero, etc.)
+        // — así este método no necesita saber qué tipo exacto se está entrenando.
+        public void EntrenarLote(Taller taller, Func<Posicion, Tropa> fabricaTropa, Posicion posicionSpawn, int cantidad = 5)
+        {
+            if (taller == null || !taller.EstaConstruido)
+            {
+                Eventos.Enqueue(new EventoJuego("Entrenamiento", "El Taller no está listo para entrenar."));
+                return;
+            }
+
+            for (int i = 0; i < cantidad; i++)
+            {
+                Task.Run(() =>
+                {
+                    var tropa = fabricaTropa(posicionSpawn);
+
+                    if (!PagarCosto(tropa.Costo))
+                    {
+                        Eventos.Enqueue(new EventoJuego("Entrenamiento", $"No hay recursos suficientes para entrenar {tropa.Nombre}."));
+                        return;
+                    }
+
+                    Thread.Sleep(3000); // tiempo de entrenamiento simulado
+
+                    AgregarUnidad(tropa);
+                    Mapa.ColocarUnidad(posicionSpawn, tropa);
+
+                    Eventos.Enqueue(new EventoJuego("Entrenamiento", $"{tropa.Nombre} entrenado y desplegado en {posicionSpawn}."));
+                });
+            }
         }
     }
 }
