@@ -1,8 +1,13 @@
 namespace ImperiosEnGuerra.Modelo
 {
+    // 4 recursos: Oro y Madera son los "básicos" (los recolectan los aldeanos
+    // sin parar). Piedra es para Defensas (murallas/torres). Metal es para
+    // el Taller de Mejoras y para el armamento más pesado (Catapulta).
     public enum TipoRecurso
     {
         Oro,
-        Madera
+        Madera,
+        Piedra,
+        Metal
     }
 }

@@ -1,0 +1,111 @@
+using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+ 
+using ImperiosEnGuerra.Modelo;
+ 
+namespace ImperiosEnGuerra.Controlador
+{
+    // "Cerebro" de la máquina (El Resto). Corre en SU PROPIO hilo — otro caso
+    // más de concurrencia real del proyecto, además de recolección,
+    // construcción, entrenamiento y movimiento — y cada cierto tiempo decide
+    // UNA acción simple, llamando exactamente los mismos métodos públicos de
+    // Jugador que llamaría el Controlador si el jugador fuera humano. Por eso
+    // esta clase NO conoce Unity ni la Vista: solo conoce Modelo.
+    public class JugadorIA
+    {
+        private readonly Partida partida;
+        private readonly Jugador jugadorIA;      // el jugador que controla la IA (El Resto)
+        private readonly Jugador jugadorRival;   // Grecia, el humano
+        private readonly Random random = new Random();
+        private readonly CancellationTokenSource cts = new CancellationTokenSource();
+ 
+        public JugadorIA(Partida partida, Jugador jugadorIA, Jugador jugadorRival)
+        {
+            this.partida = partida;
+            this.jugadorIA = jugadorIA;
+            this.jugadorRival = jugadorRival;
+        }
+ 
+        public void Iniciar() => Task.Run(() => CicloDeDecisionAsync(cts.Token));
+ 
+        public void Detener() => cts.Cancel();
+ 
+        private async Task CicloDeDecisionAsync(CancellationToken token)
+        {
+            while (!token.IsCancellationRequested && partida.Estado == EstadoPartida.EnCurso)
+            {
+                try
+                {
+                    await Task.Delay(4000, token); // la IA "piensa" cada 4 segundos
+                }
+                catch (TaskCanceledException)
+                {
+                    return; // Detener() fue llamado durante la espera
+                }
+ 
+                DecidirYEjecutarAccion();
+            }
+        }
+ 
+        // Heurística simple, a propósito (no es el foco del proyecto — lo que
+        // pide la guía es la CONCURRENCIA, no una IA sofisticada):
+        //
+        //   1. ¿No tiene Taller construido?      -> construir uno
+        //   2. ¿Tiene 150+ de Oro?                -> entrenar un lote de tropas
+        //   3. ¿Tiene alguna tropa viva?          -> atacar al rival con ella
+        //   4. Si nada de eso aplica              -> construir una Casa
+        private void DecidirYEjecutarAccion()
+        {
+            bool tieneTallerListo = jugadorIA.Edificios.Values.Any(e => e is Taller && e.EstaConstruido);
+ 
+            if (!tieneTallerListo)
+            {
+                jugadorIA.ConstruirEdificio(pos => new Taller(pos), PosicionAleatoria());
+                return;
+            }
+ 
+            if (jugadorIA.Recursos.TryGetValue(TipoRecurso.Oro, out int oro) && oro >= 150)
+            {
+                var taller = jugadorIA.Edificios.Values.OfType<Taller>().FirstOrDefault(t => t.EstaConstruido);
+                bool esEspadachin = random.Next(2) == 0;
+ 
+                jugadorIA.EntrenarLote(
+                    taller,
+                    esEspadachin ? pos => (Tropa)new Espadachin(pos) : pos => (Tropa)new Ballestero(pos),
+                    PosicionAleatoria());
+                return;
+            }
+ 
+            var tropaDisponible = jugadorIA.Unidades.Values.OfType<Tropa>().FirstOrDefault(t => t.EstaViva);
+            if (tropaDisponible != null)
+            {
+                AtacarAlRival(tropaDisponible);
+                return;
+            }
+ 
+            jugadorIA.ConstruirEdificio(pos => new House(pos), PosicionAleatoria());
+        }
+ 
+        // Ataca el primer edificio del rival que siga en pie; si no le queda
+        // ninguno, intenta con una unidad. jugadorRival.Edificios/Unidades ya
+        // son ConcurrentDictionary, así que leer .Values aquí es seguro aunque
+        // el rival esté modificándolos al mismo tiempo desde su propio hilo.
+        private void AtacarAlRival(Tropa tropa)
+        {
+            var objetivo = jugadorRival.Edificios.Values.FirstOrDefault(e => !e.EstaDestruido) as IObjetivoAtacable
+                        ?? jugadorRival.Unidades.Values.FirstOrDefault(u => u.EstaViva);
+ 
+            if (objetivo == null) return; // el rival ya no tiene nada que atacar
+ 
+            if (tropa.Atacar(objetivo))
+            {
+                jugadorIA.Eventos.Enqueue(new EventoJuego("Ataque", $"{tropa.Nombre} (IA) atacó {objetivo}."));
+                partida.VerificarGanador(); // revisa condición de victoria tras cada golpe
+            }
+        }
+ 
+        private Posicion PosicionAleatoria() => new Posicion(random.Next(0, jugadorIA.Mapa.Ancho), random.Next(0, jugadorIA.Mapa.Alto));
+    }
+}
