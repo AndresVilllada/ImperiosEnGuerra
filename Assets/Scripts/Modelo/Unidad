@@ -1,51 +1,38 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.Concurrent; // para ConcurrentQueue<T>, la cola thread-safe de eventos
-using System.Threading;               // para Thread.Sleep (simular tiempo de movimiento)
-using System.Threading.Tasks;         // para Task.Run (lanzar el hilo de movimiento)
-
+using System.Collections.Concurrent;
+using System.Threading;
+using System.Threading.Tasks;
+ 
 namespace ImperiosEnGuerra.Modelo
 {
     // ---------------------------------------------------------------------
     // POSICION: una coordenada (x, y) dentro del mapa 15x15.
-    // Es un "struct" (no una "class") porque es un dato pequeño e inmutable
-    // que se copia por valor — en Java el equivalente mas cercano seria una
-    // clase inmutable con equals()/hashCode() sobreescritos, pero aqui C#
-    // nos da structs para este caso sin el costo de crear un objeto en el heap.
     // ---------------------------------------------------------------------
     public struct Posicion : IEquatable<Posicion>
     {
         public int X { get; }
         public int Y { get; }
-
+ 
         public Posicion(int x, int y)
         {
             X = x;
             Y = y;
         }
-
-        // Distancia en casillas (sin diagonales, tipo "cuadras de una ciudad").
-        // Se usa para validar si un objetivo esta dentro del RangoAtaque de una Tropa.
+ 
         public int DistanciaManhattanHasta(Posicion otra) => Math.Abs(X - otra.X) + Math.Abs(Y - otra.Y);
-
-        // Estos 4 metodos son el equivalente a sobreescribir equals()/hashCode()
-        // en Java: le dicen a C# como comparar dos Posicion (por X e Y, no por
-        // referencia), para que funcionen bien como llave de un Dictionary y
-        // para poder usar "==" entre dos Posicion.
+ 
         public bool Equals(Posicion otra) => X == otra.X && Y == otra.Y;
         public override bool Equals(object obj) => obj is Posicion otra && Equals(otra);
         public override int GetHashCode() => HashCode.Combine(X, Y);
         public override string ToString() => $"({X},{Y})";
-
+ 
         public static bool operator ==(Posicion a, Posicion b) => a.Equals(b);
         public static bool operator !=(Posicion a, Posicion b) => !a.Equals(b);
     }
-
+ 
     // ---------------------------------------------------------------------
-    // INTERFAZ: cualquier cosa "atacable" (una Unidad o un Edificio) debe
-    // cumplir este contrato. Gracias a esto, Tropa.Atacar() puede recibir
-    // tanto una Unidad enemiga como un Edificio enemigo sin necesitar dos
-    // metodos distintos (esto es polimorfismo, igual que en Java con interfaces).
+    // INTERFAZ: cualquier cosa "atacable" (Unidad o Edificio).
     // ---------------------------------------------------------------------
     public interface IObjetivoAtacable
     {
@@ -53,161 +40,123 @@ namespace ImperiosEnGuerra.Modelo
         bool EstaDestruido { get; }
         void RecibirDanio(int cantidad);
     }
-
+ 
     // ---------------------------------------------------------------------
-    // UNIDAD: clase base ABSTRACTA (no se puede instanciar directamente,
-    // solo sus hijas: Villager, Espadachin, Ballestero). Aqui vive todo lo
-    // que CUALQUIER unidad necesita sin importar si es aldeano o militar.
+    // UNIDAD: clase base abstracta para aldeano y militares.
     // ---------------------------------------------------------------------
     public abstract class Unidad : IObjetivoAtacable
     {
-        public Guid Id { get; }                                  // identificador unico, como un UUID en Java
-        public string Nombre { get; protected set; }              // "protected" = solo esta clase y sus hijas lo modifican
-        public Posicion Posicion { get; private set; }            // solo se cambia desde dentro de esta clase (ver MoverA)
+        public Guid Id { get; }
+        public string Nombre { get; protected set; }
+        public Posicion Posicion { get; private set; }
         public int VidaMaxima { get; protected set; }
         public int VidaActual { get; private set; }
-        public bool EstaViva => VidaActual > 0;                   // propiedad calculada: no guarda un valor, lo calcula al leerse
-        public bool EstaDestruido => !EstaViva;                   // requerido por la interfaz IObjetivoAtacable
-        public IReadOnlyDictionary<TipoRecurso, int> Costo { get; protected set; } // costo de entrenamiento, de solo lectura desde afuera
-
-        // Candado (mutex) PROPIO de cada instancia de Unidad. Protege VidaActual
-        // y Posicion porque varios hilos distintos (un ataque llegando, un
-        // movimiento en curso) podrian intentar modificarlas al mismo tiempo.
+        public bool EstaViva => VidaActual > 0;
+        public bool EstaDestruido => !EstaViva;
+        public IReadOnlyDictionary<TipoRecurso, int> Costo { get; protected set; }
+ 
         private readonly object candado = new object();
-
-        // Constructor "protected": solo las clases hijas (Villager, Tropa, etc.)
-        // pueden llamarlo, nadie puede hacer "new Unidad(...)" directamente
-        // porque es abstracta.
+ 
         protected Unidad(string nombre, Posicion posicion, int vidaMaxima, IReadOnlyDictionary<TipoRecurso, int> costo)
         {
             if (vidaMaxima <= 0) throw new ArgumentException("VidaMaxima debe ser mayor que cero.", nameof(vidaMaxima));
-
+ 
             Id = Guid.NewGuid();
             Nombre = nombre;
             Posicion = posicion;
             VidaMaxima = vidaMaxima;
-            VidaActual = vidaMaxima; // nace con la vida al maximo
-            Costo = costo ?? new Dictionary<TipoRecurso, int>(); // si costo es null, usa un diccionario vacio en vez de explotar despues
+            VidaActual = vidaMaxima;
+            Costo = costo ?? new Dictionary<TipoRecurso, int>();
         }
-
-        // Aplica daño a esta unidad. El "lock" asegura que si dos Tropas le
-        // pegan a la vez desde dos hilos distintos, el descuento de vida no
-        // se corrompa (condicion de carrera clasica: leer-modificar-escribir).
+ 
         public void RecibirDanio(int cantidad)
         {
             if (cantidad < 0) throw new ArgumentException("El daño no puede ser negativo.", nameof(cantidad));
             lock (candado)
             {
-                VidaActual = Math.Max(0, VidaActual - cantidad); // nunca baja de 0
+                VidaActual = Math.Max(0, VidaActual - cantidad);
             }
         }
-
-        // Restaura vida (por si mas adelante agregas una mecanica de curacion).
+ 
         public void Curar(int cantidad)
         {
             if (cantidad < 0) throw new ArgumentException("La curación no puede ser negativa.", nameof(cantidad));
             lock (candado)
             {
-                if (!EstaViva) return; // una unidad muerta no se puede "revivir" curandola
-                VidaActual = Math.Min(VidaMaxima, VidaActual + cantidad); // nunca sobrepasa el maximo
+                if (!EstaViva) return;
+                VidaActual = Math.Min(VidaMaxima, VidaActual + cantidad);
             }
         }
-
-        // Cambia la posicion INMEDIATAMENTE (un solo paso). La usa MoverHacia
-        // internamente, y tambien la podria llamar el Controlador para un
-        // movimiento instantaneo sin animacion si algun dia lo necesitas.
+ 
         public virtual void MoverA(Posicion nuevaPosicion)
         {
             lock (candado)
             {
-                if (!EstaViva) return; // una unidad muerta no se mueve
+                if (!EstaViva) return;
                 Posicion = nuevaPosicion;
             }
         }
-
-        // -------------------------------------------------------------
-        // MOVERHACIA: aqui vive la CONCURRENCIA del movimiento.
-        // Lanza un hilo (Task.Run) que mueve la unidad celda por celda
-        // hacia "destino", con una pausa entre cada paso, sin bloquear
-        // el resto del juego mientras camina.
-        // -------------------------------------------------------------
+ 
         public void MoverHacia(Mapa mapa, Posicion destino, ConcurrentQueue<EventoJuego> eventos, int intervaloMs = 300)
         {
             if (mapa == null) return;
-
-            Task.Run(() => // todo este bloque corre en un hilo aparte, en paralelo al resto del juego
+ 
+            Task.Run(() =>
             {
-                // Sigue caminando mientras siga viva y no haya llegado aun.
                 while (EstaViva && Posicion != destino)
                 {
                     var actual = Posicion;
-
-                    // Math.Sign devuelve -1, 0 o 1 segun si hay que restar, quedarse
-                    // igual, o sumar en ese eje para acercarse al destino.
                     int dx = Math.Sign(destino.X - actual.X);
                     int dy = Math.Sign(destino.Y - actual.Y);
-
-                    // Se mueve primero en X hasta alinearse, luego en Y (movimiento
-                    // "en L", no diagonal). Es simple a proposito: no es pathfinding
-                    // real, solo demuestra el uso de hilos para el desplazamiento.
+ 
                     var siguiente = dx != 0
                         ? new Posicion(actual.X + dx, actual.Y)
                         : new Posicion(actual.X, actual.Y + dy);
-
-                    // Le pide al Mapa que haga el cambio de celda (libera el origen,
-                    // ocupa el destino, y llama a MoverA internamente).
+ 
                     bool avanzo = mapa.MoverUnidad(this, actual, siguiente);
-
+ 
                     if (!avanzo)
                     {
-                        // La celda de al lado estaba ocupada: nos detenemos aqui
-                        // en vez de intentar rodear el obstaculo (limitacion conocida).
                         eventos?.Enqueue(new EventoJuego("Movimiento", $"{Nombre} bloqueado, no puede avanzar a {siguiente}."));
                         break;
                     }
-
-                    Thread.Sleep(intervaloMs); // pausa entre paso y paso, para simular tiempo real de desplazamiento
+ 
+                    Thread.Sleep(intervaloMs);
                 }
-
-                // Si de verdad llegamos (y no nos quedamos a mitad de camino
-                // bloqueados o muertos), avisamos con un evento.
+ 
                 if (Posicion == destino)
                 {
                     eventos?.Enqueue(new EventoJuego("Movimiento", $"{Nombre} llegó a {destino}."));
                 }
             });
         }
-
+ 
         public override string ToString() => $"{Nombre} [{(EstaViva ? $"{VidaActual}/{VidaMaxima} HP" : "muerta")}] en {Posicion}";
     }
-
+ 
     // ---------------------------------------------------------------------
-    // VILLAGER (Aldeano): hereda todo de Unidad. No ataca (no hereda de
-    // Tropa), solo agrega su propia velocidad de recoleccion.
+    // VILLAGER (Aldeano): recolecta, no ataca.
     // ---------------------------------------------------------------------
     public class Villager : Unidad
     {
         public int VelocidadRecoleccion { get; }
-
+ 
         public Villager(Posicion posicion, int velocidadRecoleccion = 5)
             : base("Aldeano", posicion, vidaMaxima: 25, costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Madera, 40 } })
-            // "base(...)" llama al constructor de Unidad de arriba, pasandole
-            // los valores fijos de un Aldeano (25 de vida, cuesta 40 de madera).
         {
             if (velocidadRecoleccion <= 0) throw new ArgumentException("VelocidadRecoleccion debe ser mayor que cero.");
             VelocidadRecoleccion = velocidadRecoleccion;
         }
     }
-
+ 
     // ---------------------------------------------------------------------
-    // TROPA: clase base abstracta para toda unidad MILITAR (Espadachin,
-    // Ballestero). Agrega lo que un Aldeano no tiene: ataque y rango.
+    // TROPA: clase base abstracta para toda unidad militar.
     // ---------------------------------------------------------------------
     public abstract class Tropa : Unidad
     {
         public int DanioAtaque { get; protected set; }
-        public int RangoAtaque { get; protected set; } // 1 = cuerpo a cuerpo, mas alto = a distancia
-
+        public int RangoAtaque { get; protected set; }
+ 
         protected Tropa(string nombre, Posicion posicion, int vidaMaxima, int danioAtaque, int rangoAtaque, IReadOnlyDictionary<TipoRecurso, int> costo)
             : base(nombre, posicion, vidaMaxima, costo)
         {
@@ -216,25 +165,24 @@ namespace ImperiosEnGuerra.Modelo
             DanioAtaque = danioAtaque;
             RangoAtaque = rangoAtaque;
         }
-
-        // Ataca a cualquier IObjetivoAtacable (Unidad o Edificio). Devuelve
-        // false sin hacer nada si: esta tropa ya murio, el objetivo ya estaba
-        // destruido, o esta fuera de rango. El Controlador decide que hacer
-        // con el resultado (mostrar mensaje, actualizar la Vista, etc.).
+ 
         public bool Atacar(IObjetivoAtacable objetivo)
         {
             if (!EstaViva || objetivo == null || objetivo.EstaDestruido) return false;
             if (Posicion.DistanciaManhattanHasta(objetivo.Posicion) > RangoAtaque) return false;
-
+ 
             objetivo.RecibirDanio(DanioAtaque);
             return true;
         }
     }
-
+ 
     // ---------------------------------------------------------------------
-    // Tropas concretas: solo definen sus propios numeros (vida, daño, rango,
-    // costo). Toda la logica de comportamiento ya la heredan de Tropa/Unidad.
+    // 10 tropas concretas, todas soldados humanos (nada de máquinas de asedio),
+    // cada una con su propio rol. Solo distintos números por ahora — pueden
+    // agregar bonificaciones tipo piedra-papel-tijera después si quieren.
     // ---------------------------------------------------------------------
+ 
+    // Cuerpo a cuerpo básico. Barato, rápido de sacar.
     public class Espadachin : Tropa
     {
         public Espadachin(Posicion posicion)
@@ -243,12 +191,113 @@ namespace ImperiosEnGuerra.Modelo
         {
         }
     }
-
+ 
+    // A distancia. Menos vida que el Espadachín, pero pega antes de que lo alcancen.
     public class Ballestero : Tropa
     {
         public Ballestero(Posicion posicion)
             : base("Ballestero", posicion, vidaMaxima: 35, danioAtaque: 14, rangoAtaque: 4,
                    costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Oro, 35 } })
+        {
+        }
+    }
+ 
+    // Cuerpo a cuerpo "tanque": mucha más vida que el Espadachín, pero pega
+    // menos por golpe. Pensado para aguantar el frente. Cuesta Madera además
+    // de Oro (la lanza larga se fabrica con madera).
+    public class Piquero : Tropa
+    {
+        public Piquero(Posicion posicion)
+            : base("Piquero", posicion, vidaMaxima: 70, danioAtaque: 7, rangoAtaque: 1,
+                   costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Oro, 20 }, { TipoRecurso.Madera, 15 } })
+        {
+        }
+    }
+ 
+    // A distancia, más barato y débil que el Ballestero — arco simple contra
+    // ballesta. Buena opción temprana antes de tener suficiente Oro.
+    public class Arquero : Tropa
+    {
+        public Arquero(Posicion posicion)
+            : base("Arquero", posicion, vidaMaxima: 30, danioAtaque: 8, rangoAtaque: 3,
+                   costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Oro, 20 } })
+        {
+        }
+    }
+ 
+    // La más barata y débil de todas: poca vida, poco daño. Sirve para
+    // presionar rápido al principio de la partida, cuando aún no hay oro
+    // para nada mejor. No es de exploración real (no hay niebla de guerra
+    // en este proyecto), el nombre es solo temático.
+    public class Explorador : Tropa
+    {
+        public Explorador(Posicion posicion)
+            : base("Explorador", posicion, vidaMaxima: 20, danioAtaque: 5, rangoAtaque: 1,
+                   costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Oro, 15 } })
+        {
+        }
+    }
+ 
+    // A distancia, usa piedras como munición — primer uso real de TipoRecurso.Piedra
+    // fuera de Defensa. Alcance corto (2) pero barata.
+    public class Hondero : Tropa
+    {
+        public Hondero(Posicion posicion)
+            : base("Hondero", posicion, vidaMaxima: 25, danioAtaque: 6, rangoAtaque: 2,
+                   costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Oro, 15 }, { TipoRecurso.Piedra, 10 } })
+        {
+        }
+    }
+ 
+    // La más cara y fuerte de todas: mucha vida y mucho daño, pero cuesta
+    // Oro Y Madera (equipo pesado). Pensada para el final de la partida,
+    // cuando ya hay recursos de sobra.
+    public class Mercenario : Tropa
+    {
+        public Mercenario(Posicion posicion)
+            : base("Mercenario", posicion, vidaMaxima: 80, danioAtaque: 18, rangoAtaque: 1,
+                   costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Oro, 60 }, { TipoRecurso.Madera, 20 } })
+        {
+        }
+    }
+ 
+    // ---------------------------------------------------------------------
+    // Estas 3 últimas se pensaron para que el sprite sea trivial de dibujar:
+    // cada una se distingue por UN solo objeto grande y reconocible (escudo,
+    // antorcha, bandera), no por una pose o arma compleja.
+    // ---------------------------------------------------------------------
+ 
+    // Silueta = un escudo grande cubriendo casi todo el cuerpo. Mucha vida,
+    // poco daño — es el "tanque" fácil de dibujar (un rectángulo/óvalo
+    // grande de color encima del cuerpo ya se lee como escudero).
+    public class Escudero : Tropa
+    {
+        public Escudero(Posicion posicion)
+            : base("Escudero", posicion, vidaMaxima: 90, danioAtaque: 6, rangoAtaque: 1,
+                   costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Oro, 25 }, { TipoRecurso.Madera, 15 } })
+        {
+        }
+    }
+ 
+    // Silueta = un palo con una llama naranja/amarilla en la punta. Poca
+    // vida, daño alto — el color de la llama sola ya la distingue de las demás.
+    public class Antorchero : Tropa
+    {
+        public Antorchero(Posicion posicion)
+            : base("Antorchero", posicion, vidaMaxima: 22, danioAtaque: 12, rangoAtaque: 1,
+                   costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Oro, 20 } })
+        {
+        }
+    }
+ 
+    // Silueta = un palo largo con un rectángulo de tela (bandera) arriba.
+    // Estadísticas intermedias, nada especial en mecánica — el punto es que
+    // el sprite (palo + rectángulo de color) es de los más simples de todos.
+    public class Portaestandarte : Tropa
+    {
+        public Portaestandarte(Posicion posicion)
+            : base("Portaestandarte", posicion, vidaMaxima: 45, danioAtaque: 9, rangoAtaque: 1,
+                   costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Oro, 25 } })
         {
         }
     }
