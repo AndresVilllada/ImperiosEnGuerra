@@ -1,0 +1,77 @@
+using System.Collections.Concurrent;
+
+namespace ImperiosEnGuerra.Modelo
+{
+    public enum EstadoPartida
+    {
+        EnCurso,
+        Finalizada
+    }
+
+    // Orquesta la partida completa: los dos Jugadores (Grecia y la IA rival),
+    // el estado global, y la verificación de la condición de victoria.
+    public class Partida
+    {
+        public Jugador Jugador1 { get; private set; } // Grecia
+        public Jugador Jugador2 { get; private set; } // IA rival
+        public EstadoPartida Estado { get; private set; }
+        public string Ganador { get; private set; }
+        public ConcurrentQueue<EventoJuego> Eventos { get; private set; }
+
+        // Protege Estado/Ganador: VerificarGanador se va a llamar despues de
+        // CADA ataque, y varios ataques pueden estar ocurriendo en paralelo
+        // (varias Tropa.Atacar() en distintos hilos), asi que necesita
+        // sincronizacion para no evaluar la condicion de victoria a medias.
+        private readonly object candado = new object();
+
+        public Partida(Jugador jugador1, Jugador jugador2)
+        {
+            Jugador1 = jugador1;
+            Jugador2 = jugador2;
+            Estado = EstadoPartida.EnCurso;
+            Eventos = new ConcurrentQueue<EventoJuego>();
+        }
+
+        // Se debe llamar despues de cualquier evento relevante (un ataque, un
+        // edificio destruido, etc.). Es "idempotente": si la partida ya
+        // terminó, no vuelve a re-evaluar ni a pisar el resultado.
+        public bool VerificarGanador()
+        {
+            lock (candado)
+            {
+                if (Estado == EstadoPartida.Finalizada) return true;
+
+                bool jugador1Derrotado = EstaDerrotado(Jugador1);
+                bool jugador2Derrotado = EstaDerrotado(Jugador2);
+
+                if (jugador1Derrotado && jugador2Derrotado)
+                {
+                    Ganador = "Empate"; // caso extremo: ambos caen al mismo tiempo
+                }
+                else if (jugador1Derrotado)
+                {
+                    Ganador = Jugador2.Nombre;
+                }
+                else if (jugador2Derrotado)
+                {
+                    Ganador = Jugador1.Nombre;
+                }
+                else
+                {
+                    return false; // nadie ha perdido todavia
+                }
+
+                Estado = EstadoPartida.Finalizada;
+                Eventos.Enqueue(new EventoJuego("FinDePartida", $"¡{Ganador} ha ganado la partida!"));
+                return true;
+            }
+        }
+
+        // Un jugador pierde si su Centro Urbano fue destruido, O si ya no le
+        // queda ninguna unidad militar viva — tal cual pide la guia ("y/o").
+        private bool EstaDerrotado(Jugador jugador)
+        {
+            return jugador.CentroUrbanoDestruido() || jugador.TodasLasUnidadesMilitaresDestruidas();
+        }
+    }
+}
