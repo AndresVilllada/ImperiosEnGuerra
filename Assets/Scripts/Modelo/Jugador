@@ -136,5 +136,77 @@ namespace ImperiosEnGuerra.Modelo
                 });
             }
         }
+        // Construye un edificio EN UN HILO DEDICADO: paga el costo, reserva la celda
+        // de inmediato, y va llamando Edificio.AvanzarConstruccion() cada cierto
+        // tiempo hasta llegar a 100%. "fabricaEdificio" crea la instancia concreta
+        // (House, Taller, Defensa, etc.) — este método no necesita saber cuál es.
+        public void ConstruirEdificio(Func<Posicion, Edificio> fabricaEdificio, Posicion posicion, int incrementoPorTick = 10, int intervaloMs = 500)
+        {
+            if (!Mapa.CeldaLibre(posicion))
+            {
+                Eventos.Enqueue(new EventoJuego("Construccion", "La celda de destino no está libre."));
+                return;
+            }
+
+            Task.Run(() =>
+            {
+                var edificio = fabricaEdificio(posicion);
+
+                if (!PagarCosto(edificio.Costo))
+                {
+                    Eventos.Enqueue(new EventoJuego("Construccion", $"No hay recursos suficientes para construir {edificio.Nombre}."));
+                    return;
+                }
+
+                // Se reserva la celda apenas se paga, para que otro hilo no intente
+                // construir algo distinto ahi mientras este edificio sigue en progreso.
+                Mapa.ColocarEdificio(posicion, edificio);
+                AgregarEdificio(edificio);
+
+                Eventos.Enqueue(new EventoJuego("Construccion", $"Inició la construcción de {edificio.Nombre} en {posicion}."));
+
+                while (!edificio.EstaConstruido)
+                {
+                    Thread.Sleep(intervaloMs);
+                    edificio.AvanzarConstruccion(incrementoPorTick);
+                    Eventos.Enqueue(new EventoJuego("Construccion", $"{edificio.Nombre} construcción {edificio.ProgresoConstruccion}%"));
+                }
+
+                Eventos.Enqueue(new EventoJuego("Construccion", $"{edificio.Nombre} completado en {posicion}."));
+            });
+
+
+        }
+        // Hace que "aldeano" recolecte de "recurso" DE FORMA CONTINUA, un ciclo cada
+        // intervaloMs, hasta que el aldeano muera o el deposito se agote. Usa
+        // aldeano.VelocidadRecoleccion como la cantidad extraida por cada ciclo.
+        public void IniciarRecoleccion(Villager aldeano, Recurso recurso, Posicion posicionRecurso, int intervaloMs = 1000)
+        {
+            if (aldeano == null || recurso == null) return;
+
+            Task.Run(() =>
+            {
+                while (aldeano.EstaViva && !recurso.EstaAgotado())
+                {
+                    Thread.Sleep(intervaloMs); // simula el tiempo que tarda un ciclo de recoleccion
+
+                    int extraido = recurso.Extraer(aldeano.VelocidadRecoleccion);
+                    if (extraido <= 0) break; // el deposito se agotó justo en este ciclo
+
+                    AgregarRecurso(recurso.Tipo, extraido);
+
+                    Eventos.Enqueue(new EventoJuego(
+                        "Recoleccion",
+                        $"{aldeano.Nombre} recolectó {extraido} de {recurso.Tipo} (quedan {recurso.Cantidad})."
+                    ));
+                }
+
+                if (recurso.EstaAgotado())
+                {
+                    Mapa.LiberarCelda(posicionRecurso); // libera la celda para que se pueda construir/pasar ahí
+                    Eventos.Enqueue(new EventoJuego("Recoleccion", $"El depósito de {recurso.Tipo} en {posicionRecurso} se agotó."));
+                }
+            });
+        }
     }
 }
