@@ -1,7 +1,9 @@
-using System.Collections.Concurrent;
+using System.Collections.Concurrent; // ConcurrentDictionary: colecciones thread-safe
 
 namespace ImperiosEnGuerra.Modelo
 {
+    // Que hay ocupando cada celda de la matriz, en terminos generales (para
+    // validaciones rapidas tipo "esta celda esta libre para moverme ahi?").
     public enum TipoCelda
     {
         Libre,
@@ -10,15 +12,32 @@ namespace ImperiosEnGuerra.Modelo
         Unidad
     }
 
-    // Mapa unico compartido entre Grecia y la IA rival.
+    // ---------------------------------------------------------------------
+    // MAPA: la matriz (por defecto 15x15) UNICA y COMPARTIDA entre Grecia y
+    // la IA rival — ambos Jugador reciben la MISMA instancia de Mapa en su
+    // constructor, por eso las acciones de uno afectan lo que ve el otro.
+    //
+    // Guarda la informacion de las celdas en DOS formas complementarias:
+    //   1. Un array 2D de TipoCelda, para saber RAPIDO que tipo de cosa hay
+    //      en una celda (sin tener que revisar los 3 diccionarios).
+    //   2. Tres ConcurrentDictionary (uno por Recurso, Edificio y Unidad),
+    //      para poder obtener la REFERENCIA REAL al objeto que esta en una
+    //      posicion (por ejemplo, para llamar recurso.Extraer(...) sobre el
+    //      deposito exacto que hay en esa celda).
+    // ---------------------------------------------------------------------
     public class Mapa
     {
         public int Ancho { get; private set; }
         public int Alto { get; private set; }
 
+        // El array 2D normal de .NET NO tiene version "thread-safe" nativa
+        // (a diferencia de Dictionary, que si tiene ConcurrentDictionary),
+        // por eso necesita este candado manual para protegerlo.
         private readonly TipoCelda[,] celdas;
         private readonly object candadoCeldas = new object();
 
+        // Estos tres si son colecciones thread-safe de fabrica: varios
+        // hilos pueden leer/escribir sin necesitar lock adicional aqui.
         private readonly ConcurrentDictionary<Posicion, Recurso> recursosEnMapa;
         private readonly ConcurrentDictionary<Posicion, Edificio> edificiosEnMapa;
         private readonly ConcurrentDictionary<Posicion, Unidad> unidadesEnMapa;
@@ -33,11 +52,16 @@ namespace ImperiosEnGuerra.Modelo
             unidadesEnMapa = new ConcurrentDictionary<Posicion, Unidad>();
         }
 
+        // Valida que una Posicion realmente caiga dentro de los limites de
+        // la matriz (0 <= X < Ancho, 0 <= Y < Alto), para no intentar
+        // acceder a un indice invalido del array en ningun otro metodo.
         public bool EstaDentroDelMapa(Posicion pos)
         {
             return pos.X >= 0 && pos.X < Ancho && pos.Y >= 0 && pos.Y < Alto;
         }
 
+        // Consulta rapida: esta celda esta vacia y disponible para colocar
+        // algo ahi (un edificio nuevo, moverse una unidad, etc)?
         public bool CeldaLibre(Posicion pos)
         {
             lock (candadoCeldas)
@@ -46,6 +70,8 @@ namespace ImperiosEnGuerra.Modelo
             }
         }
 
+        // Devuelve QUE TIPO de cosa hay en una celda (sin la referencia al
+        // objeto en si, solo la categoria general).
         public TipoCelda ObtenerTipoCelda(Posicion pos)
         {
             lock (candadoCeldas)
@@ -54,6 +80,10 @@ namespace ImperiosEnGuerra.Modelo
             }
         }
 
+        // Metodo privado auxiliar: actualiza el "estado general" de una
+        // celda en el array. Lo usan todos los metodos publicos de abajo
+        // (ColocarRecurso, ColocarEdificio, etc) para mantener el array
+        // sincronizado con lo que hay realmente en los diccionarios.
         private void MarcarCelda(Posicion pos, TipoCelda tipo)
         {
             lock (candadoCeldas)
@@ -66,6 +96,10 @@ namespace ImperiosEnGuerra.Modelo
         }
 
         // ---------- Recursos ----------
+
+        // Ubica un deposito de Recurso en una celda: lo guarda en el
+        // diccionario Y actualiza el array de celdas a la vez, para que
+        // ambas fuentes de informacion queden consistentes entre si.
         public void ColocarRecurso(Posicion pos, Recurso recurso)
         {
             if (!EstaDentroDelMapa(pos)) return;
@@ -73,12 +107,18 @@ namespace ImperiosEnGuerra.Modelo
             MarcarCelda(pos, TipoCelda.Recurso);
         }
 
+        // Devuelve la REFERENCIA real al Recurso en esa posicion (para
+        // poder llamar .Extraer(...) sobre el), o null si no hay ninguno ahi.
         public Recurso ObtenerRecurso(Posicion pos)
         {
             recursosEnMapa.TryGetValue(pos, out var recurso);
             return recurso;
         }
 
+        // Vacia por completo una celda: quita cualquier Recurso, Edificio o
+        // Unidad que estuviera registrada ahi (por si acaso mas de uno
+        // quedo asociado por error) y la marca como Libre otra vez. Se usa,
+        // por ejemplo, cuando un deposito de recurso se agota del todo.
         public void LiberarCelda(Posicion pos)
         {
             if (!EstaDentroDelMapa(pos)) return;
@@ -89,6 +129,7 @@ namespace ImperiosEnGuerra.Modelo
         }
 
         // ---------- Edificios ----------
+
         public void ColocarEdificio(Posicion pos, Edificio edificio)
         {
             if (!EstaDentroDelMapa(pos)) return;
@@ -103,6 +144,7 @@ namespace ImperiosEnGuerra.Modelo
         }
 
         // ---------- Unidades ----------
+
         public void ColocarUnidad(Posicion pos, Unidad unidad)
         {
             if (!EstaDentroDelMapa(pos)) return;
@@ -116,9 +158,13 @@ namespace ImperiosEnGuerra.Modelo
             return unidad;
         }
 
-        // Mueve una unidad de una celda a otra: libera el origen (si estaba
-        // marcado como Unidad) y ocupa el destino. El Modelo (no el Controlador)
-        // es quien coordina este cambio para mantener consistente celdas + diccionario.
+        // Mueve una Unidad de "origen" a "destino": primero valida que el
+        // destino este libre (si no, devuelve false y no hace nada), luego
+        // libera la celda de origen, ocupa la de destino, y finalmente le
+        // avisa a la propia Unidad que actualice su posicion interna
+        // (unidad.MoverA). Esta coordinacion vive aqui, en el Mapa, y no en
+        // Unidad.MoverHacia, porque el Mapa es el unico que conoce el
+        // estado de TODAS las celdas a la vez.
         public bool MoverUnidad(Unidad unidad, Posicion origen, Posicion destino)
         {
             if (!EstaDentroDelMapa(destino) || !CeldaLibre(destino)) return false;

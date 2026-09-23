@@ -1,111 +1,189 @@
 using System;
-using System.Linq;
+using System.Linq;              // para los metodos .Any(), .OfType(), .FirstOrDefault() sobre las colecciones
 using System.Threading;
 using System.Threading.Tasks;
- 
-using ImperiosEnGuerra.Modelo;
- 
-namespace ImperiosEnGuerra.Controlador
+
+namespace ImperiosEnGuerra.Modelo
 {
-    // "Cerebro" de la máquina (El Resto). Corre en SU PROPIO hilo — otro caso
-    // más de concurrencia real del proyecto, además de recolección,
-    // construcción, entrenamiento y movimiento — y cada cierto tiempo decide
-    // UNA acción simple, llamando exactamente los mismos métodos públicos de
-    // Jugador que llamaría el Controlador si el jugador fuera humano. Por eso
-    // esta clase NO conoce Unity ni la Vista: solo conoce Modelo.
+    // ---------------------------------------------------------------------
+    // JUGADORIA: el "cerebro" de la maquina. No es un Jugador en si mismo
+    // (no hereda de Jugador ni lo reemplaza) — es una clase APARTE que
+    // CONTROLA a un Jugador ya existente, tomando decisiones por el y
+    // llamando a sus mismos metodos publicos (ConstruirEdificio,
+    // EntrenarLote, etc.) que usaria el jugador humano.
+    //
+    // Vive en el Modelo (no en Controlador) porque asi lo indico la
+    // profesora: toda la logica de decision debe estar aqui, y el
+    // Controlador solo debe "pasar informacion", nunca decidir nada.
+    // ---------------------------------------------------------------------
     public class JugadorIA
     {
-        private readonly Partida partida;
-        private readonly Jugador jugadorIA;      // el jugador que controla la IA (El Resto)
-        private readonly Jugador jugadorRival;   // Grecia, el humano
-        private readonly Random random = new Random();
+        private readonly Partida partida;       // para poder revisar/actualizar el estado global tras cada turno
+        private readonly Jugador jugadorIA;     // el Jugador que esta IA controla (el rival de Grecia)
+        private readonly Jugador jugadorRival;  // el otro Jugador (Grecia, el humano) — a quien la IA va a atacar
+        private readonly Random random = new Random(); // para elegir acciones al azar (que tropa entrenar, donde construir)
+
+        // Permite "apagar" el hilo de la IA de forma segura desde afuera
+        // (por ejemplo, cuando la partida termina) sin tener que matar el
+        // hilo a la fuerza — se le pide "amablemente" que se detenga.
         private readonly CancellationTokenSource cts = new CancellationTokenSource();
- 
+
         public JugadorIA(Partida partida, Jugador jugadorIA, Jugador jugadorRival)
         {
             this.partida = partida;
             this.jugadorIA = jugadorIA;
             this.jugadorRival = jugadorRival;
         }
- 
+
+        // Arranca el hilo de decision de la IA. Se llama UNA vez, apenas
+        // se crea la Partida (ver ejemplo de uso mas abajo en el proyecto).
         public void Iniciar() => Task.Run(() => CicloDeDecisionAsync(cts.Token));
- 
+
+        // Pide que el hilo se detenga en su proxima oportunidad (cuando
+        // termine el Task.Delay actual). Llamar esto cuando la partida acabe.
         public void Detener() => cts.Cancel();
- 
+
+        // -------------------------------------------------------------
+        // CICLO PRINCIPAL: aqui vive la CONCURRENCIA de la IA — es un
+        // hilo separado que corre en paralelo a todo lo demas del juego
+        // (recoleccion, construccion, entrenamiento, movimiento), tomando
+        // UNA decision cada 4 segundos, indefinidamente, hasta que la
+        // partida termine o alguien llame Detener().
+        // -------------------------------------------------------------
         private async Task CicloDeDecisionAsync(CancellationToken token)
         {
+            // Sigue "pensando" mientras: no le hayan pedido detenerse Y
+            // la partida siga en curso (si ya hay ganador, no tiene sentido
+            // que la IA siga jugando).
             while (!token.IsCancellationRequested && partida.Estado == EstadoPartida.EnCurso)
             {
                 try
                 {
-                    await Task.Delay(4000, token); // la IA "piensa" cada 4 segundos
+                    // Espera 4 segundos ANTES de decidir (simula "tiempo de
+                    // reaccion" de la maquina, y evita que decida infinitas
+                    // veces por segundo saturando el juego).
+                    await Task.Delay(4000, token);
                 }
                 catch (TaskCanceledException)
                 {
-                    return; // Detener() fue llamado durante la espera
+                    // Si Detener() se llamo mientras estaba esperando, el
+                    // Delay se cancela y lanza esta excepcion — simplemente
+                    // salimos del metodo, terminando el hilo limpiamente.
+                    return;
                 }
- 
+
                 DecidirYEjecutarAccion();
+
+                // Tras cada turno de la IA (construya, entrene o ataque),
+                // se revisa si con esa accion ya se definio un ganador.
+                partida.VerificarGanador();
             }
         }
- 
-        // Heurística simple, a propósito (no es el foco del proyecto — lo que
-        // pide la guía es la CONCURRENCIA, no una IA sofisticada):
+
+        // -------------------------------------------------------------
+        // HEURISTICA DE DECISION: reglas simples "si esto, entonces
+        // aquello", evaluadas en orden de prioridad. A proposito no es una
+        // IA sofisticada (sin machine learning ni prediccion) porque lo
+        // que la guia evalua es el uso de CONCURRENCIA, no que tan lista
+        // sea la maquina.
         //
-        //   1. ¿No tiene Taller construido?      -> construir uno
-        //   2. ¿Tiene 150+ de Oro?                -> entrenar un lote de tropas
-        //   3. ¿Tiene alguna tropa viva?          -> atacar al rival con ella
-        //   4. Si nada de eso aplica              -> construir una Casa
+        //   1. Si no tiene Taller construido      -> construir uno
+        //   2. Si tiene 150 o mas de Oro           -> entrenar un lote de tropas (al azar, entre las 10)
+        //   3. Si tiene alguna tropa viva          -> atacar al rival con ella
+        //   4. Si nada de lo anterior aplica       -> construir una Casa
+        // -------------------------------------------------------------
         private void DecidirYEjecutarAccion()
         {
+            // Pregunta 1: ¿ya tengo un Taller LISTO (no solo en construccion)?
+            // .Any() recorre los edificios buscando si existe al menos uno
+            // que sea Taller Y que ya este EstaConstruido == true.
             bool tieneTallerListo = jugadorIA.Edificios.Values.Any(e => e is Taller && e.EstaConstruido);
- 
+
             if (!tieneTallerListo)
             {
+                // No tiene Taller: prioridad maxima es construir uno.
+                // Llama al mismo metodo que usaria un jugador humano desde
+                // el Controlador — la IA no tiene "atajos" especiales.
                 jugadorIA.ConstruirEdificio(pos => new Taller(pos), PosicionAleatoria());
-                return;
+                return; // una sola accion por turno, no hace mas nada esta vez
             }
- 
+
+            // Pregunta 2: ¿tengo suficiente Oro para entrenar? (150 es un
+            // umbral arbitrario, se puede ajustar facilmente aqui mismo)
             if (jugadorIA.Recursos.TryGetValue(TipoRecurso.Oro, out int oro) && oro >= 150)
             {
+                // Busca un Taller que ya este construido (podria tener
+                // varios, o ninguno listo aun si se acaba de derrumbar).
                 var taller = jugadorIA.Edificios.Values.OfType<Taller>().FirstOrDefault(t => t.EstaConstruido);
-                bool esEspadachin = random.Next(2) == 0;
- 
-                jugadorIA.EntrenarLote(
-                    taller,
-                    esEspadachin ? pos => (Tropa)new Espadachin(pos) : pos => (Tropa)new Ballestero(pos),
-                    PosicionAleatoria());
+
+                // Elige AL AZAR cual de las 10 tropas entrenar. La sintaxis
+                // "switch expression" de C# (disponible desde C# 8) es un
+                // atajo mas compacto que un switch tradicional con "case" y
+                // "break" — cada linea es "valor => resultado".
+                // random.Next(10) devuelve un numero entre 0 y 9 inclusive.
+                Func<Posicion, Tropa> fabricaTropa = random.Next(10) switch
+                {
+                    0 => pos => new Espadachin(pos),
+                    1 => pos => new Ballestero(pos),
+                    2 => pos => new Piquero(pos),
+                    3 => pos => new Arquero(pos),
+                    4 => pos => new Explorador(pos),
+                    5 => pos => new Hondero(pos),
+                    6 => pos => new Mercenario(pos),
+                    7 => pos => new Escudero(pos),
+                    8 => pos => new Antorchero(pos),
+                    _ => pos => new Portaestandarte(pos), // "_" es el caso por defecto (equivalente a "default" en Java)
+                };
+
+                // EntrenarLote ya internamente lanza 5 hilos en paralelo
+                // (uno por tropa) y valida el costo de cada una.
+                jugadorIA.EntrenarLote(taller, fabricaTropa, PosicionAleatoria());
                 return;
             }
- 
+
+            // Pregunta 3: ¿tengo alguna tropa viva para atacar?
+            // .OfType<Tropa>() filtra la coleccion de Unidad quedandose solo
+            // con las que son especificamente Tropa (no Villager).
             var tropaDisponible = jugadorIA.Unidades.Values.OfType<Tropa>().FirstOrDefault(t => t.EstaViva);
             if (tropaDisponible != null)
             {
                 AtacarAlRival(tropaDisponible);
                 return;
             }
- 
+
+            // Si no aplico ninguna de las anteriores (tiene Taller, no le
+            // alcanza el oro, y no tiene tropas vivas): construye una Casa
+            // como accion por defecto, para seguir progresando.
             jugadorIA.ConstruirEdificio(pos => new House(pos), PosicionAleatoria());
         }
- 
-        // Ataca el primer edificio del rival que siga en pie; si no le queda
-        // ninguno, intenta con una unidad. jugadorRival.Edificios/Unidades ya
-        // son ConcurrentDictionary, así que leer .Values aquí es seguro aunque
-        // el rival esté modificándolos al mismo tiempo desde su propio hilo.
+
+        // -------------------------------------------------------------
+        // Busca algo del rival para atacar: primero intenta con un
+        // edificio (mas facil de encontrar, no se mueve), y si no le
+        // queda ninguno en pie, busca una unidad viva.
+        // -------------------------------------------------------------
         private void AtacarAlRival(Tropa tropa)
         {
+            // "as IObjetivoAtacable" convierte el Edificio encontrado a la
+            // interfaz comun; "??" es el operador de "si lo de la izquierda
+            // es null, usa lo de la derecha" (coalescencia nula) — si no
+            // hay edificios vivos, prueba con unidades.
             var objetivo = jugadorRival.Edificios.Values.FirstOrDefault(e => !e.EstaDestruido) as IObjetivoAtacable
                         ?? jugadorRival.Unidades.Values.FirstOrDefault(u => u.EstaViva);
- 
-            if (objetivo == null) return; // el rival ya no tiene nada que atacar
- 
+
+            if (objetivo == null) return; // el rival ya no tiene nada en pie, no hay nada que atacar
+
+            // Tropa.Atacar ya valida internamente rango y vida — aqui solo
+            // nos interesa saber si el golpe se aplico, para loguearlo.
             if (tropa.Atacar(objetivo))
             {
                 jugadorIA.Eventos.Enqueue(new EventoJuego("Ataque", $"{tropa.Nombre} (IA) atacó {objetivo}."));
-                partida.VerificarGanador(); // revisa condición de victoria tras cada golpe
             }
         }
- 
+
+        // Genera una posicion aleatoria dentro de los limites del mapa
+        // (usa jugadorIA.Mapa.Ancho/Alto en vez de un numero fijo, por si
+        // en algun momento cambian el tamaño del mapa).
         private Posicion PosicionAleatoria() => new Posicion(random.Next(0, jugadorIA.Mapa.Ancho), random.Next(0, jugadorIA.Mapa.Alto));
     }
 }

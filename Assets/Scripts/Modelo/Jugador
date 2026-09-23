@@ -1,63 +1,93 @@
 using System;
-using System.Linq;
 using System.Collections.Generic;
-using System.Collections.Concurrent;
-using System.Threading;
-using System.Threading.Tasks;
- 
+using System.Collections.Concurrent; // ConcurrentDictionary, ConcurrentQueue: colecciones thread-safe
+using System.Threading;               // Thread.Sleep, para simular tiempos de espera dentro de los hilos
+using System.Threading.Tasks;         // Task.Run, para lanzar cada hilo
+
 namespace ImperiosEnGuerra.Modelo
 {
-    // Evento simple que el Modelo deposita cuando algo relevante terminó en un
-    // hilo secundario. El Controlador los va sacando de la cola (TryDequeue) y
-    // decide qué mostrar en la Vista — el Modelo no sabe nada de la Vista.
+    // ---------------------------------------------------------------------
+    // EVENTOJUEGO: un mensaje simple que el Modelo deja en una cola cuando
+    // algo relevante paso en un hilo secundario (termino de recolectar,
+    // termino de construir, etc). El Controlador la va vaciando (TryDequeue)
+    // y decide que mostrar en la Vista o que escribir en el log — el Modelo
+    // no sabe nada de la Vista ni de archivos, solo "avisa que algo paso".
+    // ---------------------------------------------------------------------
     public class EventoJuego
     {
-        public string Tipo { get; }
-        public string Mensaje { get; }
- 
+        public string Tipo { get; }     // categoria del evento: "Recoleccion", "Construccion", "Entrenamiento", "Ataque", etc.
+        public string Mensaje { get; }  // texto legible para mostrar/loguear
+
         public EventoJuego(string tipo, string mensaje)
         {
             Tipo = tipo;
             Mensaje = mensaje;
         }
     }
- 
+
+    // ---------------------------------------------------------------------
+    // JUGADOR: agrupa todo lo que le pertenece a un jugador (humano o el que
+    // controla JugadorIA) — su mapa, sus recursos, sus unidades, sus
+    // edificios — y expone los METODOS que representan las acciones del
+    // juego (recolectar, construir, entrenar). Toda la logica de "cuando"
+    // y "que" hacer vive AFUERA de esta clase (en el Controlador si es
+    // humano, o en JugadorIA si es la maquina); Jugador solo sabe COMO
+    // ejecutar cada accion de forma segura entre hilos.
+    // ---------------------------------------------------------------------
     public class Jugador
     {
         public string Nombre { get; private set; }
-        public Mapa Mapa { get; private set; }
+        public Mapa Mapa { get; private set; } // referencia al mapa UNICO y compartido con el rival
+
+        // ConcurrentDictionary en vez de Dictionary normal: varios hilos
+        // (varios aldeanos recolectando, varias tropas entrenandose) pueden
+        // leer/escribir esta coleccion "al mismo tiempo" sin corromperla.
         public ConcurrentDictionary<TipoRecurso, int> Recursos { get; private set; }
         public ConcurrentDictionary<Guid, Unidad> Unidades { get; private set; }
         public ConcurrentDictionary<Guid, Edificio> Edificios { get; private set; }
+
+        // Cola thread-safe: cualquier hilo puede Enqueue() sin pisar a otro
+        // hilo que este haciendo lo mismo al mismo tiempo.
         public ConcurrentQueue<EventoJuego> Eventos { get; private set; }
- 
+
+        // Candado dedicado SOLO para proteger las operaciones de "pagar"
+        // recursos (ver PagarCosto). Es distinto de cualquier lock que
+        // tengan Unidad/Edificio/Recurso — cada clase protege lo suyo.
         private readonly object candadoRecursos = new object();
- 
-        // Solo la usa JugarTurnoIA (más abajo) para elegir al azar qué
-        // construir/entrenar/atacar cuando este Jugador lo maneja la máquina.
-        private readonly Random random = new Random();
- 
+
         public Jugador(string nombre, Mapa mapa)
         {
             Nombre = nombre;
             Mapa = mapa;
- 
+
+            // Arranca con 100 de cada recurso. Se inicializan explicitamente
+            // los 4 tipos para que Recursos nunca este "incompleto" (evita
+            // tener que chequear ContainsKey en todos lados despues).
             Recursos = new ConcurrentDictionary<TipoRecurso, int>();
             Recursos[TipoRecurso.Oro] = 100;
             Recursos[TipoRecurso.Madera] = 100;
             Recursos[TipoRecurso.Piedra] = 100;
             Recursos[TipoRecurso.Metal] = 100;
- 
+
             Unidades = new ConcurrentDictionary<Guid, Unidad>();
             Edificios = new ConcurrentDictionary<Guid, Edificio>();
             Eventos = new ConcurrentQueue<EventoJuego>();
         }
- 
+
+        // Suma "cantidad" al tipo de recurso indicado, de forma ATOMICA.
+        // AddOrUpdate es un metodo propio de ConcurrentDictionary: si la
+        // llave ya existe, aplica la funcion (sumar) de forma segura aunque
+        // dos hilos llamen esto "al mismo tiempo"; si no existe, la crea
+        // con el valor inicial dado (aqui nunca pasa, porque el constructor
+        // ya puso los 4 tipos, pero es buena practica dejarlo resuelto igual).
         public void AgregarRecurso(TipoRecurso tipo, int cantidad)
         {
             Recursos.AddOrUpdate(tipo, cantidad, (clave, valorActual) => valorActual + cantidad);
         }
- 
+
+        // Revisa si el jugador tiene AL MENOS lo que pide "costo" de cada
+        // tipo de recurso. Solo LEE, no modifica nada — por eso no necesita
+        // lock propio (leer un ConcurrentDictionary ya es seguro de por si).
         public bool TieneRecursosSuficientes(IReadOnlyDictionary<TipoRecurso, int> costo)
         {
             foreach (var par in costo)
@@ -67,13 +97,18 @@ namespace ImperiosEnGuerra.Modelo
             }
             return true;
         }
- 
+
+        // Verifica Y descuenta el costo como UNA SOLA operacion atomica
+        // (protegida con lock). Esto es clave: sin el lock, dos hilos
+        // podrian ambos "ver" que si alcanza el oro, y los dos descontar,
+        // dejando el saldo en negativo (condicion de carrera clasica).
+        // Devuelve false sin tocar nada si no alcanza.
         public bool PagarCosto(IReadOnlyDictionary<TipoRecurso, int> costo)
         {
             lock (candadoRecursos)
             {
                 if (!TieneRecursosSuficientes(costo)) return false;
- 
+
                 foreach (var par in costo)
                 {
                     Recursos[par.Key] -= par.Value;
@@ -81,11 +116,18 @@ namespace ImperiosEnGuerra.Modelo
                 return true;
             }
         }
- 
+
+        // Altas/bajas simples sobre las colecciones. Como son
+        // ConcurrentDictionary, el indexador "[]" y TryRemove ya son
+        // atomicos por si solos, sin necesitar lock adicional aqui.
         public void AgregarUnidad(Unidad unidad) => Unidades[unidad.Id] = unidad;
         public void RemoverUnidad(Unidad unidad) => Unidades.TryRemove(unidad.Id, out _);
         public void AgregarEdificio(Edificio edificio) => Edificios[edificio.Id] = edificio;
- 
+
+        // Recorre los edificios buscando el TownCenter (Centro Urbano) y
+        // devuelve si esta destruido. Si el jugador nunca tuvo uno (caso
+        // raro, no deberia pasar en la practica), se considera derrotado
+        // por seguridad (return true al final del foreach sin encontrarlo).
         public bool CentroUrbanoDestruido()
         {
             foreach (var edificio in Edificios.Values)
@@ -94,21 +136,33 @@ namespace ImperiosEnGuerra.Modelo
             }
             return true;
         }
- 
+
+        // Revisa si TODAS las unidades de tipo Tropa (militares) que alguna
+        // vez tuvo el jugador ya estan muertas. "tuvoAlgunaTropa" evita que
+        // un jugador que JAMAS entreno ninguna tropa (por ejemplo, recien
+        // empezando la partida) se considere "derrotado" por default.
         public bool TodasLasUnidadesMilitaresDestruidas()
         {
             bool tuvoAlgunaTropa = false;
             foreach (var unidad in Unidades.Values)
             {
-                if (unidad is Tropa)
+                if (unidad is Tropa) // "is" chequea el tipo real del objeto, aunque este guardado como Unidad
                 {
                     tuvoAlgunaTropa = true;
-                    if (unidad.EstaViva) return false;
+                    if (unidad.EstaViva) return false; // con que UNA siga viva, ya no estan "todas destruidas"
                 }
             }
             return tuvoAlgunaTropa;
         }
- 
+
+        // -------------------------------------------------------------
+        // ENTRENAMIENTO EN PARALELO: lanza "cantidad" hilos INDEPENDIENTES
+        // (uno por tropa), cada uno pagando su propio costo y esperando su
+        // propio tiempo de entrenamiento. "fabricaTropa" es una funcion que
+        // recibe una Posicion y devuelve la tropa concreta ya construida
+        // (Espadachin, Ballestero, etc) — asi este metodo generico no
+        // necesita saber cual de las 10 tropas se esta entrenando.
+        // -------------------------------------------------------------
         public void EntrenarLote(Taller taller, Func<Posicion, Tropa> fabricaTropa, Posicion posicionSpawn, int cantidad = 5)
         {
             if (taller == null || !taller.EstaConstruido)
@@ -116,29 +170,41 @@ namespace ImperiosEnGuerra.Modelo
                 Eventos.Enqueue(new EventoJuego("Entrenamiento", "El Taller no está listo para entrenar."));
                 return;
             }
- 
+
             for (int i = 0; i < cantidad; i++)
             {
+                // Cada iteracion lanza SU PROPIO hilo — las "cantidad" tropas
+                // se entrenan "al mismo tiempo", no una despues de otra.
                 Task.Run(() =>
                 {
                     var tropa = fabricaTropa(posicionSpawn);
- 
+
+                    // PagarCosto ya esta protegido con lock: si el oro no
+                    // alcanza para todas, exactamente las que si alcanzaron
+                    // tendran exito, sin dejar saldo negativo.
                     if (!PagarCosto(tropa.Costo))
                     {
                         Eventos.Enqueue(new EventoJuego("Entrenamiento", $"No hay recursos suficientes para entrenar {tropa.Nombre}."));
                         return;
                     }
- 
-                    Thread.Sleep(3000);
- 
+
+                    Thread.Sleep(3000); // tiempo de entrenamiento simulado (bloquea SOLO este hilo, no el resto del juego)
+
                     AgregarUnidad(tropa);
                     Mapa.ColocarUnidad(posicionSpawn, tropa);
- 
+
                     Eventos.Enqueue(new EventoJuego("Entrenamiento", $"{tropa.Nombre} entrenado y desplegado en {posicionSpawn}."));
                 });
             }
         }
- 
+
+        // -------------------------------------------------------------
+        // CONSTRUCCION CON PROGRESO: UN solo hilo por edificio, que paga el
+        // costo, reserva la celda de inmediato, y va llamando
+        // AvanzarConstruccion() repetidamente (con una pausa entre cada
+        // llamada) hasta llegar a 100%, emitiendo un evento en cada paso
+        // para que la Vista pueda mostrar una barra de progreso real.
+        // -------------------------------------------------------------
         public void ConstruirEdificio(Func<Posicion, Edificio> fabricaEdificio, Posicion posicion, int incrementoPorTick = 10, int intervaloMs = 500)
         {
             if (!Mapa.CeldaLibre(posicion))
@@ -146,54 +212,71 @@ namespace ImperiosEnGuerra.Modelo
                 Eventos.Enqueue(new EventoJuego("Construccion", "La celda de destino no está libre."));
                 return;
             }
- 
+
             Task.Run(() =>
             {
                 var edificio = fabricaEdificio(posicion);
- 
+
                 if (!PagarCosto(edificio.Costo))
                 {
                     Eventos.Enqueue(new EventoJuego("Construccion", $"No hay recursos suficientes para construir {edificio.Nombre}."));
                     return;
                 }
- 
+
+                // Se reserva la celda apenas se paga (no al terminar), para
+                // que ningun otro hilo intente construir algo distinto ahi
+                // mientras este edificio sigue en progreso.
                 Mapa.ColocarEdificio(posicion, edificio);
                 AgregarEdificio(edificio);
- 
+
                 Eventos.Enqueue(new EventoJuego("Construccion", $"Inició la construcción de {edificio.Nombre} en {posicion}."));
- 
+
+                // Bucle de progreso: cada intervaloMs suma incrementoPorTick%
+                // hasta llegar a 100 (EstaConstruido pasa a true dentro de
+                // AvanzarConstruccion cuando eso ocurre).
                 while (!edificio.EstaConstruido)
                 {
                     Thread.Sleep(intervaloMs);
                     edificio.AvanzarConstruccion(incrementoPorTick);
                     Eventos.Enqueue(new EventoJuego("Construccion", $"{edificio.Nombre} construcción {edificio.ProgresoConstruccion}%"));
                 }
- 
+
                 Eventos.Enqueue(new EventoJuego("Construccion", $"{edificio.Nombre} completado en {posicion}."));
             });
         }
- 
+
+        // -------------------------------------------------------------
+        // RECOLECCION CONTINUA: UN hilo por aldeano recolectando, que repite
+        // el ciclo "esperar -> extraer -> sumar al banco" mientras el
+        // aldeano siga vivo y el deposito no se haya agotado.
+        // -------------------------------------------------------------
         public void IniciarRecoleccion(Villager aldeano, Recurso recurso, Posicion posicionRecurso, int intervaloMs = 1000)
         {
             if (aldeano == null || recurso == null) return;
- 
+
             Task.Run(() =>
             {
                 while (aldeano.EstaViva && !recurso.EstaAgotado())
                 {
-                    Thread.Sleep(intervaloMs);
- 
+                    Thread.Sleep(intervaloMs); // simula el tiempo que tarda un ciclo de recoleccion
+
+                    // Extraer() ya tiene su propio lock interno: si dos
+                    // aldeanos recolectan del MISMO deposito a la vez, no
+                    // se van a "robar" cantidad entre si.
                     int extraido = recurso.Extraer(aldeano.VelocidadRecoleccion);
-                    if (extraido <= 0) break;
- 
+                    if (extraido <= 0) break; // el deposito se agoto justo en este ciclo
+
                     AgregarRecurso(recurso.Tipo, extraido);
- 
+
                     Eventos.Enqueue(new EventoJuego(
                         "Recoleccion",
                         $"{aldeano.Nombre} recolectó {extraido} de {recurso.Tipo} (quedan {recurso.Cantidad})."
                     ));
                 }
- 
+
+                // Si el bucle termino porque el deposito se agoto (y no
+                // porque el aldeano murio), se libera la celda del mapa
+                // para que se pueda construir o pasar por ahi despues.
                 if (recurso.EstaAgotado())
                 {
                     Mapa.LiberarCelda(posicionRecurso);
@@ -201,68 +284,5 @@ namespace ImperiosEnGuerra.Modelo
                 }
             });
         }
- 
-        // ------------------------------------------------------------------
-        // IA: TODA la decisión vive aquí, en el Modelo — el Controlador
-        // (Controlador/JugadorIA.cs) NO decide nada, solo llama este método
-        // cada cierto tiempo en un bucle. Esta es la regla de "el Controlador
-        // es el chismoso": recibe un aviso, se lo pasa al Modelo, y ya.
-        //
-        // Heurística simple a propósito (lo que se evalúa es la concurrencia,
-        // no qué tan lista es la IA):
-        //   1. ¿No tiene Taller construido?  -> construir uno
-        //   2. ¿Tiene 150+ de Oro?           -> entrenar un lote de tropas (al azar)
-        //   3. ¿Tiene alguna tropa viva?     -> atacar al rival con ella
-        //   4. Si nada de eso aplica         -> construir una Casa
-        // ------------------------------------------------------------------
-        public void JugarTurnoIA(Jugador rival)
-        {
-            bool tieneTallerListo = Edificios.Values.Any(e => e is Taller && e.EstaConstruido);
- 
-            if (!tieneTallerListo)
-            {
-                ConstruirEdificio(pos => new Taller(pos), PosicionAleatoria());
-                return;
-            }
- 
-            if (Recursos.TryGetValue(TipoRecurso.Oro, out int oro) && oro >= 150)
-            {
-                var taller = Edificios.Values.OfType<Taller>().FirstOrDefault(t => t.EstaConstruido);
- 
-                Func<Posicion, Tropa> fabricaTropa = random.Next(10) switch
-                {
-                    0 => pos => new Espadachin(pos),
-                    1 => pos => new Ballestero(pos),
-                    2 => pos => new Piquero(pos),
-                    3 => pos => new Arquero(pos),
-                    4 => pos => new Explorador(pos),
-                    5 => pos => new Hondero(pos),
-                    6 => pos => new Mercenario(pos),
-                    7 => pos => new Escudero(pos),
-                    8 => pos => new Antorchero(pos),
-                    _ => pos => new Portaestandarte(pos),
-                };
- 
-                EntrenarLote(taller, fabricaTropa, PosicionAleatoria());
-                return;
-            }
- 
-            var tropaDisponible = Unidades.Values.OfType<Tropa>().FirstOrDefault(t => t.EstaViva);
-            if (tropaDisponible != null)
-            {
-                var objetivo = rival.Edificios.Values.FirstOrDefault(e => !e.EstaDestruido) as IObjetivoAtacable
-                            ?? rival.Unidades.Values.FirstOrDefault(u => u.EstaViva);
- 
-                if (objetivo != null && tropaDisponible.Atacar(objetivo))
-                {
-                    Eventos.Enqueue(new EventoJuego("Ataque", $"{tropaDisponible.Nombre} (IA) atacó {objetivo}."));
-                }
-                return;
-            }
- 
-            ConstruirEdificio(pos => new House(pos), PosicionAleatoria());
-        }
- 
-        private Posicion PosicionAleatoria() => new Posicion(random.Next(0, Mapa.Ancho), random.Next(0, Mapa.Alto));
     }
 }
