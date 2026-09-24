@@ -63,14 +63,42 @@ MonoBehaviour:
   description: Contains an orthographic camera and a Global Light 2D. Works with the 2D Renderer in Universal RP.
   preview: {fileID: -3604256930052969394}
   dependencies:
+  - dependency: {fileID: 11400000, guid: 2ac5b655a0e4541409f02d23b0535f74, type: 2}
+    instantiationMode: 1
+  - dependency: {fileID: 11400000, guid: 4d417fe3b7d9ae54f8a407eaa6e5a5c4, type: 2}
+    instantiationMode: 1
+  - dependency: {fileID: 11400000, guid: 81e53b4065314b145bce611163de8026, type: 2}
+    instantiationMode: 1
+  - dependency: {fileID: 11400000, guid: 2f12256f05d84a6478704b23cb5bd25e, type: 2}
+    instantiationMode: 1
+  - dependency: {fileID: 11400000, guid: 093c877efbe43754f8e0b5d6ddeb56b6, type: 2}
+    instantiationMode: 1
+  - dependency: {fileID: 11400000, guid: 493f88f0c519d3541be4a3b2bde76dd3, type: 2}
+    instantiationMode: 1
+  - dependency: {fileID: 11400000, guid: 95a6015c65d8ad94594e837497b19202, type: 2}
+    instantiationMode: 1
+  - dependency: {fileID: 11400000, guid: 129ecbc291f769748b440999a700c35a, type: 2}
+    instantiationMode: 1
+  - dependency: {fileID: 11400000, guid: b4b9ac0eb9395dc4fae21753a7576f11, type: 2}
+    instantiationMode: 1
+  - dependency: {fileID: 11400000, guid: 28f30c05230044c46a9e91b874ec3b83, type: 2}
+    instantiationMode: 1
   - dependency: {fileID: 2800000, guid: 65337b1180338ad4f9a9db854ef59ecc, type: 3}
     instantiationMode: 0
+  - dependency: {fileID: 11400000, guid: ef84ba2924a16b042add999613a7ce38, type: 2}
+    instantiationMode: 1
   - dependency: {fileID: 2800000, guid: 826758dc0e0c764499e7fe817eaf0773, type: 3}
+    instantiationMode: 0
+  - dependency: {fileID: 2800000, guid: 16d44ee3343d45e43a31c77c3eecf82c, type: 3}
     instantiationMode: 0
   - dependency: {fileID: 11400000, guid: 2c9efe4484554434a9c137e824094802, type: 2}
     instantiationMode: 1
   - dependency: {fileID: 2100000, guid: 22954c5c38c600f49a475ef73b9c6253, type: 2}
     instantiationMode: 0
+  - dependency: {fileID: 11400000, guid: 065ffe618b2873c45bc773bc1aae764c, type: 2}
+    instantiationMode: 1
+  - dependency: {fileID: 11400000, guid: bb8b5463fa5d65244a73cbeeed668957, type: 2}
+    instantiationMode: 1
   templatePipeline: {fileID: 0}
   badge: {fileID: 0}
   addToDefaults: 1
