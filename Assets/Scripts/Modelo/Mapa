@@ -42,7 +42,7 @@ namespace ImperiosEnGuerra.Modelo
         private readonly ConcurrentDictionary<Posicion, Edificio> edificiosEnMapa;
         private readonly ConcurrentDictionary<Posicion, Unidad> unidadesEnMapa;
 
-        public Mapa(int ancho = 15, int alto = 15)
+        public Mapa(int ancho = 20, int alto = 20)
         {
             Ancho = ancho;
             Alto = alto;
