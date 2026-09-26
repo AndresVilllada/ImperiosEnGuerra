@@ -1,4 +1,5 @@
 using System.Collections.Concurrent; // ConcurrentDictionary: colecciones thread-safe
+using System.Collections.Generic;    // IReadOnlyDictionary
 
 namespace ImperiosEnGuerra.Modelo
 {
@@ -13,7 +14,7 @@ namespace ImperiosEnGuerra.Modelo
     }
 
     // ---------------------------------------------------------------------
-    // MAPA: la matriz (por defecto 15x15) UNICA y COMPARTIDA entre Grecia y
+    // MAPA: la matriz (por defecto 20x20) UNICA y COMPARTIDA entre Grecia y
     // la IA rival — ambos Jugador reciben la MISMA instancia de Mapa en su
     // constructor, por eso las acciones de uno afectan lo que ve el otro.
     //
@@ -41,6 +42,13 @@ namespace ImperiosEnGuerra.Modelo
         private readonly ConcurrentDictionary<Posicion, Recurso> recursosEnMapa;
         private readonly ConcurrentDictionary<Posicion, Edificio> edificiosEnMapa;
         private readonly ConcurrentDictionary<Posicion, Unidad> unidadesEnMapa;
+
+        // Expone los depositos de recurso solo para LECTURA. La Vista la
+        // necesita para recorrer TODOS los depositos y dibujarlos
+        // (MapaView.RenderizarRecursos), pero no debe poder agregar/quitar
+        // directamente -- eso sigue siendo responsabilidad exclusiva de
+        // ColocarRecurso/LiberarCelda.
+        public IReadOnlyDictionary<Posicion, Recurso> RecursosEnMapa => recursosEnMapa;
 
         public Mapa(int ancho = 20, int alto = 20)
         {
