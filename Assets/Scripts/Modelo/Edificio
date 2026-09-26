@@ -104,17 +104,6 @@ namespace ImperiosEnGuerra.Modelo
         }
     }
  
-    // Taller de Mejoras: sube estadísticas de las tropas. Necesita Metal
-    // además de Madera — tiene sentido temático (forjar mejores armas/armaduras).
-    public class TallerMejoras : Edificio
-    {
-        public TallerMejoras(Posicion posicion)
-            : base("Taller de Mejoras", posicion, vidaMaxima: 180,
-                   costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Madera, 100 }, { TipoRecurso.Metal, 80 } })
-        {
-        }
-    }
- 
     // Torre/muralla defensiva: se construye en Piedra (no Madera, a
     // diferencia de los demás) y puede atacar sola a quien entre en su rango.
     public class Defensa : Edificio
