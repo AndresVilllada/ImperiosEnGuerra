@@ -17,6 +17,9 @@ namespace ImperiosEnGuerra.Controlador
         [Header("Vista - Mundo (Pista A)")]
         [SerializeField] private MapaView mapaView;
 
+        [Header("Vista - Fin de Partida (Tus Paneles)")]
+        [SerializeField] private FinPartidaView finPartidaView;
+
         // Un Prefab especifico por cada tipo de unidad (en vez de uno solo
         // generico), porque asi armo su Vista tu compañero: cada Prefab ya
         // trae su propio sprite y su componente UnidadView configurado.
@@ -163,6 +166,34 @@ namespace ImperiosEnGuerra.Controlador
 
         private void Update()
         {
+            // OJO: Le preguntamos a la Partida (Modelo) si ya alguien ganó
+            // antes de dibujar recursos o mover aldeanos.
+            bool yaAcabo = partida.VerificarGanador();
+
+            // Revisa si la partida ya termino, para guardar el resultado
+            // final UNA sola vez y mostrar el panel de victoria/derrota.
+            if (yaAcabo && cancelacionLog != null)
+            {
+                archivos.GuardarResultadoFinal(partida);
+                cancelacionLog.Cancel();
+                cancelacionLog = null; // evita que se vuelva a guardar en el siguiente frame
+
+                // AQUI CONECTAMOS CON TUS PANELES (FinPartidaView)
+                if (finPartidaView != null)
+                {
+                    if (partida.Ganador == jugadorGrecia.Nombre)
+                    {
+                        finPartidaView.MostrarVictoria();
+                    }
+                    else
+                    {
+                        finPartidaView.MostrarDerrota();
+                    }
+                }
+
+                return; // Cortamos el Update aquí para que no siga dibujando cosas si el juego ya acabó
+            }
+
             // Cada frame, revisamos si algun recurso se agoto (para que
             // MapaView destruya su GameObject visual). RenderizarRecursos
             // ya esta incluido dentro de ActualizarRecursos, asi que esto
@@ -186,22 +217,6 @@ namespace ImperiosEnGuerra.Controlador
                 hud.ActualizarMadera(jugadorGrecia.Recursos[TipoRecurso.Madera]);
                 hud.ActualizarPiedra(jugadorGrecia.Recursos[TipoRecurso.Piedra]);
                 hud.ActualizarMetal(jugadorGrecia.Recursos[TipoRecurso.Metal]);
-            }
-
-            // Revisa si la partida ya termino, para guardar el resultado
-            // final UNA sola vez y mostrar el panel de victoria/derrota
-            // correspondiente segun si Grecia (el jugador humano) gano o no.
-            if (partida.Estado == EstadoPartida.Finalizada && cancelacionLog != null)
-            {
-                archivos.GuardarResultadoFinal(partida);
-                cancelacionLog.Cancel();
-                cancelacionLog = null; // evita que se vuelva a guardar en el siguiente frame
-
-                if (hud != null)
-                {
-                    if (partida.Ganador == jugadorGrecia.Nombre) hud.MostrarVictoria();
-                    else hud.MostrarDerrota();
-                }
             }
         }
 

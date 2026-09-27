@@ -85,7 +85,10 @@ namespace ImperiosEnGuerra.Modelo
                 }
 
                 Estado = EstadoPartida.Finalizada;
-                Eventos.Enqueue(new EventoJuego("FinDePartida", $"¡{Ganador} ha ganado la partida!"));
+                
+                // Actualización: Encolamos el evento para que el GestorArchivos
+                // lo escriba automáticamente en el log_partida.txt
+                Eventos.Enqueue(new EventoJuego("FinDePartida", $"Resultado final: {Ganador}"));
                 return true;
             }
         }
