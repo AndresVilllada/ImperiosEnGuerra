@@ -71,6 +71,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 296371359787350769, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
       insertIndex: -1
       addedObject: {fileID: 8739517926470987434}
+    - targetCorrespondingSourceObject: {fileID: 296371359787350769, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: -2321989998512870437}
   m_SourcePrefab: {fileID: 100100000, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
 --- !u!224 &273707605790232550 stripped
 RectTransform:
@@ -106,6 +109,52 @@ MonoBehaviour:
   spriteEspadachin: {fileID: 0}
   spritePiquero: {fileID: -594197781322936934, guid: 31e15b074d7344a3b99376dd4f70eb1d, type: 3}
   spriteArquero: {fileID: 0}
+--- !u!61 &-2321989998512870437
+BoxCollider2D:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3461959963339355662}
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Density: 1
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_ForceSendLayers:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  m_ForceReceiveLayers:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  m_ContactCaptureLayers:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  m_CallbackLayers:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  m_IsTrigger: 0
+  m_UsedByEffector: 0
+  m_CompositeOperation: 0
+  m_CompositeOrder: 0
+  m_Offset: {x: -0.013939321, y: -0.009956688}
+  m_SpriteTilingProperty:
+    border: {x: 0, y: 0, z: 0, w: 0}
+    pivot: {x: 0, y: 0}
+    oldSize: {x: 0, y: 0}
+    newSize: {x: 0, y: 0}
+    adaptiveTilingThreshold: 0
+    drawMode: 0
+    adaptiveTiling: 0
+  m_AutoTiling: 0
+  m_Size: {x: 1.0278785, y: 1.2429423}
+  m_EdgeRadius: 0
 --- !u!1 &8156867662229588025 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 4982307177887614150, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}

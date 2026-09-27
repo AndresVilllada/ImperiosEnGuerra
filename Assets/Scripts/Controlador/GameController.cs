@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using System.Threading;
@@ -56,6 +57,14 @@ namespace ImperiosEnGuerra.Controlador
         // poder actualizarlos frame a frame.
         private readonly Dictionary<System.Guid, GameObject> vistasUnidades = new Dictionary<System.Guid, GameObject>();
         private readonly Dictionary<System.Guid, GameObject> vistasEdificios = new Dictionary<System.Guid, GameObject>();
+
+        // -------------------------------------------------------------
+        // SISTEMA DE INPUT DEL JUGADOR HUMANO (Grecia): guarda que hay
+        // seleccionado en este momento. Solo uno de los dos puede estar
+        // activo a la vez — seleccionar algo nuevo limpia el otro.
+        // -------------------------------------------------------------
+        private Edificio edificioSeleccionado;
+        private Unidad unidadSeleccionada;
 
         private void Start()
         {
@@ -218,6 +227,13 @@ namespace ImperiosEnGuerra.Controlador
                 hud.ActualizarPiedra(jugadorGrecia.Recursos[TipoRecurso.Piedra]);
                 hud.ActualizarMetal(jugadorGrecia.Recursos[TipoRecurso.Metal]);
             }
+
+            // Input del jugador humano: seleccionar edificios/unidades
+            // propias con clic, elegir accion con teclas, mover/atacar
+            // con un segundo clic. Va al final del Update porque ya
+            // cortamos arriba con "return" si la partida termino, asi
+            // que si llegamos hasta aqui es porque el juego sigue en curso.
+            ManejarInput();
         }
 
         // Crea la vista de cada Unidad nueva que aparezca en "jugador"
@@ -300,6 +316,210 @@ namespace ImperiosEnGuerra.Controlador
             Defensa => prefabEdificioDefensa,
             _ => null,
         };
+
+        // ---------------------------------------------------------------
+        // INPUT DEL JUGADOR: revisa cada frame si hubo clic o tecla
+        // relevante. El Controlador NO decide si una accion es valida
+        // (eso lo valida el Modelo, como siempre) — solo traduce la
+        // intencion del jugador en la llamada correcta.
+        // ---------------------------------------------------------------
+        private void ManejarInput()
+        {
+            if (Input.GetMouseButtonDown(0))
+            {
+                ManejarClicIzquierdo();
+            }
+
+            // Solo tiene sentido leer teclas de accion si hay un edificio
+            // PROPIO seleccionado esperando que el jugador elija que hacer.
+            if (edificioSeleccionado != null)
+            {
+                ManejarTeclasDeAccion();
+            }
+        }
+
+        // Convierte la posicion del mouse en pantalla a coordenadas del
+        // mundo, y revisa que collider 2D hay justo ahi (los edificios ya
+        // tienen Box Collider 2D; las unidades necesitan uno tambien para
+        // poder seleccionarse con clic).
+        private void ManejarClicIzquierdo()
+        {
+            Vector2 puntoMundo = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+            Collider2D colisionado = Physics2D.OverlapPoint(puntoMundo);
+
+            if (colisionado == null)
+            {
+                // Clic en una celda vacia: si tenia una unidad propia
+                // seleccionada, la mandamos a moverse hacia ahi.
+                if (unidadSeleccionada != null)
+                {
+                    OrdenarMover(puntoMundo);
+                }
+                DeseleccionarTodo();
+                return;
+            }
+
+            var edificioView = colisionado.GetComponent<EdificioView>();
+            if (edificioView != null)
+            {
+                ManejarClicEnEdificio(edificioView.EdificioModelo);
+                return;
+            }
+
+            var unidadView = colisionado.GetComponent<UnidadView>();
+            if (unidadView != null)
+            {
+                ManejarClicEnUnidad(unidadView.UnidadModelo);
+                return;
+            }
+        }
+
+        // Revisa si un Edificio o Unidad le pertenece a Grecia, buscandolo
+        // en sus propios diccionarios (mismo patron que usa JugadorIA para
+        // identificar al rival).
+        private bool EsDeGrecia(Edificio edificio) => jugadorGrecia.Edificios.ContainsKey(edificio.Id);
+        private bool EsDeGrecia(Unidad unidad) => jugadorGrecia.Unidades.ContainsKey(unidad.Id);
+
+        private void ManejarClicEnEdificio(Edificio edificio)
+        {
+            // Si ya tengo una tropa seleccionada y hago clic en un
+            // edificio RIVAL, es una orden de ataque, no de seleccion.
+            if (unidadSeleccionada is Tropa tropaSeleccionada && !EsDeGrecia(edificio))
+            {
+                OrdenarAtacar(tropaSeleccionada, edificio);
+                return;
+            }
+
+            // Solo se puede seleccionar (para construir/entrenar) un
+            // edificio PROPIO. Clic en edificio rival sin tropa armada:
+            // no hace nada, solo deselecciona.
+            if (!EsDeGrecia(edificio))
+            {
+                DeseleccionarTodo();
+                return;
+            }
+
+            DeseleccionarTodo();
+            edificioSeleccionado = edificio;
+
+            // Aviso simple (queda en log_partida.txt) de que quedo
+            // seleccionado y que teclas usar — no hay UI de botones todavia.
+            if (edificio is TownCenter)
+                jugadorGrecia.Eventos.Enqueue(new EventoJuego("Seleccion", "Centro Urbano seleccionado. Teclas: 1=Casa 2=Taller 3=Torre"));
+            else if (edificio is Taller taller && taller.EstaConstruido)
+                jugadorGrecia.Eventos.Enqueue(new EventoJuego("Seleccion", "Taller seleccionado. Teclas: 1=Espadachin 2=Piquero 3=Arquero"));
+        }
+
+        private void ManejarClicEnUnidad(Unidad unidad)
+        {
+            if (EsDeGrecia(unidad))
+            {
+                // Selecciono su propia unidad (aldeano o tropa).
+                DeseleccionarTodo();
+                unidadSeleccionada = unidad;
+            }
+            else if (unidadSeleccionada is Tropa tropaSeleccionada)
+            {
+                // Unidad rival + ya tenia una tropa propia seleccionada
+                // -> orden de ataque.
+                OrdenarAtacar(tropaSeleccionada, unidad);
+            }
+        }
+
+        // Lee las teclas 1/2/3 segun que tipo de edificio propio este
+        // seleccionado, y llama al metodo correspondiente del Modelo.
+        private void ManejarTeclasDeAccion()
+        {
+            if (edificioSeleccionado is TownCenter)
+            {
+                if (Input.GetKeyDown(KeyCode.Alpha1)) OrdenarConstruir(pos => new House(pos));
+                else if (Input.GetKeyDown(KeyCode.Alpha2)) OrdenarConstruir(pos => new Taller(pos));
+                else if (Input.GetKeyDown(KeyCode.Alpha3)) OrdenarConstruir(pos => new Defensa(pos));
+            }
+            else if (edificioSeleccionado is Taller tallerSeleccionado && tallerSeleccionado.EstaConstruido)
+            {
+                if (Input.GetKeyDown(KeyCode.Alpha1)) OrdenarEntrenar(tallerSeleccionado, pos => new Espadachin(pos));
+                else if (Input.GetKeyDown(KeyCode.Alpha2)) OrdenarEntrenar(tallerSeleccionado, pos => new Piquero(pos));
+                else if (Input.GetKeyDown(KeyCode.Alpha3)) OrdenarEntrenar(tallerSeleccionado, pos => new Arquero(pos));
+            }
+        }
+
+        // Construye el edificio elegido en la celda libre mas cercana al
+        // edificio seleccionado (en vez de pedir un segundo clic de
+        // posicion, para simplificar la interaccion). Jugador.ConstruirEdificio
+        // ya valida costo y celda libre, exactamente igual que con la IA.
+        private void OrdenarConstruir(Func<Posicion, Edificio> fabricaEdificio)
+        {
+            var posicionLibre = PosicionLibreCercana(edificioSeleccionado.Posicion);
+            jugadorGrecia.ConstruirEdificio(fabricaEdificio, posicionLibre);
+            DeseleccionarTodo();
+        }
+
+        // Mismo patron que OrdenarConstruir, pero entrena UNA sola tropa
+        // (no un lote de 5 como hace JugadorIA) porque aqui es una accion
+        // puntual decidida por el jugador, no una decision automatica.
+        private void OrdenarEntrenar(Taller taller, Func<Posicion, Tropa> fabricaTropa)
+        {
+            var posicionLibre = PosicionLibreCercana(taller.Posicion);
+            jugadorGrecia.EntrenarLote(taller, fabricaTropa, posicionLibre, cantidad: 1);
+            DeseleccionarTodo();
+        }
+
+        // Manda a la unidad seleccionada a moverse hacia la celda donde
+        // se hizo clic. Unidad.MoverHacia ya hace todo el trabajo (hilo
+        // propio, un paso a la vez, revisando colisiones en el Mapa).
+        private void OrdenarMover(Vector2 puntoMundo)
+        {
+            if (unidadSeleccionada == null || !unidadSeleccionada.EstaViva) return;
+
+            var destino = new Posicion(Mathf.FloorToInt(puntoMundo.x), Mathf.FloorToInt(puntoMundo.y));
+            if (destino.X < 0 || destino.X >= mapa.Ancho || destino.Y < 0 || destino.Y >= mapa.Alto) return;
+
+            unidadSeleccionada.MoverHacia(mapa, destino, jugadorGrecia.Eventos);
+        }
+
+        // Ordena a la tropa seleccionada atacar el objetivo (edificio o
+        // unidad rival). Tropa.Atacar ya valida rango y vida por su cuenta.
+        private void OrdenarAtacar(Tropa tropa, IObjetivoAtacable objetivo)
+        {
+            if (tropa.Atacar(objetivo))
+            {
+                jugadorGrecia.Eventos.Enqueue(new EventoJuego("Ataque", $"{tropa.Nombre} atacó al rival."));
+            }
+            else
+            {
+                jugadorGrecia.Eventos.Enqueue(new EventoJuego("Ataque", $"{tropa.Nombre} no pudo atacar (fuera de rango)."));
+            }
+            DeseleccionarTodo();
+        }
+
+        // Busca la celda libre mas cercana a "origen", revisando anillos
+        // cada vez mas grandes alrededor (radio 1, luego 2, etc.) hasta
+        // encontrar una que Mapa.CeldaLibre() acepte.
+        private Posicion PosicionLibreCercana(Posicion origen, int radioMaximo = 5)
+        {
+            for (int radio = 1; radio <= radioMaximo; radio++)
+            {
+                for (int dx = -radio; dx <= radio; dx++)
+                {
+                    for (int dy = -radio; dy <= radio; dy++)
+                    {
+                        if (Math.Max(Math.Abs(dx), Math.Abs(dy)) != radio) continue; // solo el borde del anillo
+
+                        var candidata = new Posicion(origen.X + dx, origen.Y + dy);
+                        if (candidata.X < 0 || candidata.X >= mapa.Ancho || candidata.Y < 0 || candidata.Y >= mapa.Alto) continue;
+                        if (mapa.CeldaLibre(candidata)) return candidata;
+                    }
+                }
+            }
+            return origen; // fallback improbable: no habia ninguna celda libre cerca
+        }
+
+        private void DeseleccionarTodo()
+        {
+            edificioSeleccionado = null;
+            unidadSeleccionada = null;
+        }
 
         private void OnDestroy()
         {
