@@ -34,8 +34,8 @@ namespace ImperiosEnGuerra.Vista
 
         private void AtacarObjetivoCercano(Defensa torreModelo)
         {
-            // Uso de la API moderna de Unity para evitar el aviso de obsolescencia
-            UnidadView[] todasLasUnidades = FindObjectsByType<UnidadView>(FindObjectsSortMode.None);
+            // Usamos la API limpia recomendada por Unity sin modos de ordenamiento obsoletos
+            UnidadView[] todasLasUnidades = FindObjectsByType<UnidadView>(FindObjectsInactive.Exclude);
 
             UnidadView objetivoMasCercano = null;
             float menorDistancia = float.MaxValue;
