@@ -88,7 +88,7 @@ namespace ImperiosEnGuerra.Modelo
         // sea la maquina.
         //
         //   1. Si no tiene Taller construido      -> construir uno
-        //   2. Si tiene 150 o mas de Oro           -> entrenar un lote de tropas (al azar, entre las 10)
+        //   2. Si tiene 150 o mas de Oro           -> entrenar un lote de tropas (al azar, entre las 3)
         //   3. Si tiene alguna tropa viva          -> atacar al rival con ella
         //   4. Si nada de lo anterior aplica       -> construir una Casa
         // -------------------------------------------------------------
@@ -116,23 +116,14 @@ namespace ImperiosEnGuerra.Modelo
                 // varios, o ninguno listo aun si se acaba de derrumbar).
                 var taller = jugadorIA.Edificios.Values.OfType<Taller>().FirstOrDefault(t => t.EstaConstruido);
 
-                // Elige AL AZAR cual de las 10 tropas entrenar. La sintaxis
-                // "switch expression" de C# (disponible desde C# 8) es un
-                // atajo mas compacto que un switch tradicional con "case" y
-                // "break" — cada linea es "valor => resultado".
-                // random.Next(10) devuelve un numero entre 0 y 9 inclusive.
-                Func<Posicion, Tropa> fabricaTropa = random.Next(10) switch
+                // Elige AL AZAR cual de las 3 tropas entrenar. random.Next(3)
+                // devuelve 0, 1 o 2 — el "_" del switch es el caso por
+                // defecto (equivalente a "default" en Java), aqui para Arquero.
+                Func<Posicion, Tropa> fabricaTropa = random.Next(3) switch
                 {
                     0 => pos => new Espadachin(pos),
-                    1 => pos => new Ballestero(pos),
-                    2 => pos => new Piquero(pos),
-                    3 => pos => new Arquero(pos),
-                    4 => pos => new Explorador(pos),
-                    5 => pos => new Hondero(pos),
-                    6 => pos => new Mercenario(pos),
-                    7 => pos => new Escudero(pos),
-                    8 => pos => new Antorchero(pos),
-                    _ => pos => new Portaestandarte(pos), // "_" es el caso por defecto (equivalente a "default" en Java)
+                    1 => pos => new Piquero(pos),
+                    _ => pos => new Arquero(pos),
                 };
 
                 // EntrenarLote ya internamente lanza 5 hilos en paralelo
@@ -178,6 +169,7 @@ namespace ImperiosEnGuerra.Modelo
             if (tropa.Atacar(objetivo))
             {
                 jugadorIA.Eventos.Enqueue(new EventoJuego("Ataque", $"{tropa.Nombre} (IA) atacó {objetivo}."));
+                partida.VerificarGanador(); // revisa condición de victoria tras cada golpe
             }
         }
 

@@ -7,10 +7,10 @@ using System.Threading.Tasks;         // Task.Run, para lanzar cada hilo
 namespace ImperiosEnGuerra.Modelo
 {
     // ---------------------------------------------------------------------
-    // EVENTOJUEGO: un mensaje simple que el Modelo deja en una cola cuando
-    // algo relevante paso en un hilo secundario (termino de recolectar,
-    // termino de construir, etc). El Controlador la va vaciando (TryDequeue)
-    // y decide que mostrar en la Vista o que escribir en el log — el Modelo
+    // EVENTOJUEGO: un mensaje simple que el Modelo deposita cuando algo
+    // relevante paso en un hilo secundario (termino de recolectar, termino
+    // de construir, etc). El Controlador la va vaciando (TryDequeue) y
+    // decide que mostrar en la Vista o que escribir en el log — el Modelo
     // no sabe nada de la Vista ni de archivos, solo "avisa que algo paso".
     // ---------------------------------------------------------------------
     public class EventoJuego
@@ -32,7 +32,8 @@ namespace ImperiosEnGuerra.Modelo
     // juego (recolectar, construir, entrenar). Toda la logica de "cuando"
     // y "que" hacer vive AFUERA de esta clase (en el Controlador si es
     // humano, o en JugadorIA si es la maquina); Jugador solo sabe COMO
-    // ejecutar cada accion de forma segura entre hilos.
+    // ejecutar cada accion de forma segura entre hilos. Por eso esta clase
+    // NO sabe nada de IA — eso es responsabilidad exclusiva de JugadorIA.cs.
     // ---------------------------------------------------------------------
     public class Jugador
     {
@@ -160,8 +161,8 @@ namespace ImperiosEnGuerra.Modelo
         // (uno por tropa), cada uno pagando su propio costo y esperando su
         // propio tiempo de entrenamiento. "fabricaTropa" es una funcion que
         // recibe una Posicion y devuelve la tropa concreta ya construida
-        // (Espadachin, Ballestero, etc) — asi este metodo generico no
-        // necesita saber cual de las 10 tropas se esta entrenando.
+        // (Espadachin, Piquero, Arquero) — asi este metodo generico no
+        // necesita saber cual de las 3 tropas se esta entrenando.
         // -------------------------------------------------------------
         public void EntrenarLote(Taller taller, Func<Posicion, Tropa> fabricaTropa, Posicion posicionSpawn, int cantidad = 5)
         {
