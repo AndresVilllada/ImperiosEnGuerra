@@ -10,7 +10,11 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: 296371359787350769, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
       propertyPath: m_Name
-      value: UnidadBase
+      value: Unidad_Aldeano
+      objectReference: {fileID: 0}
+    - target: {fileID: 1176971336072892944, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+      propertyPath: m_SortingOrder
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 1430081461083537681, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
       propertyPath: m_LocalPosition.x
@@ -55,5 +59,47 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 296371359787350769, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 3891769990503328223}
   m_SourcePrefab: {fileID: 100100000, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+--- !u!224 &1604953859372546879 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 4025041103622046489, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+  m_PrefabInstance: {fileID: 2422409413755664422}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1 &2702947750631080663 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 296371359787350769, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+  m_PrefabInstance: {fileID: 2422409413755664422}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &3891769990503328223
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2702947750631080663}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 91dab7b18961b7b4f904f1e91964087f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ImperiosEnGuerra.Vista.UnidadView
+  spriteRenderer: {fileID: 3588051375659346486}
+  barraVidaBase: {fileID: 7258278117400722656}
+  barraVidaFill: {fileID: 1604953859372546879}
+  spriteAldeano: {fileID: -5948806968594788206, guid: 4c87a6310f87c47f1b785669e6191f00, type: 3}
+  spriteEspadachin: {fileID: 0}
+  spritePiquero: {fileID: 0}
+  spriteArquero: {fileID: 0}
+--- !u!212 &3588051375659346486 stripped
+SpriteRenderer:
+  m_CorrespondingSourceObject: {fileID: 1176971336072892944, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+  m_PrefabInstance: {fileID: 2422409413755664422}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1 &7258278117400722656 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 4982307177887614150, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+  m_PrefabInstance: {fileID: 2422409413755664422}
+  m_PrefabAsset: {fileID: 0}

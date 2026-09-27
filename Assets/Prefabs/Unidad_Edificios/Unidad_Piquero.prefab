@@ -16,6 +16,10 @@ PrefabInstance:
       propertyPath: m_Sprite
       value: 
       objectReference: {fileID: -594197781322936934, guid: 2307ce0d618cb4ea2be2cb2a4148cbde, type: 3}
+    - target: {fileID: 1176971336072892944, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+      propertyPath: m_SortingOrder
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 1430081461083537681, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
       propertyPath: m_LocalPosition.x
       value: 0
@@ -63,5 +67,47 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 296371359787350769, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 8739517926470987434}
   m_SourcePrefab: {fileID: 100100000, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+--- !u!224 &273707605790232550 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 4025041103622046489, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+  m_PrefabInstance: {fileID: 3753668998111038719}
+  m_PrefabAsset: {fileID: 0}
+--- !u!212 &2612869679881854703 stripped
+SpriteRenderer:
+  m_CorrespondingSourceObject: {fileID: 1176971336072892944, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+  m_PrefabInstance: {fileID: 3753668998111038719}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1 &3461959963339355662 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 296371359787350769, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+  m_PrefabInstance: {fileID: 3753668998111038719}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &8739517926470987434
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3461959963339355662}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 91dab7b18961b7b4f904f1e91964087f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ImperiosEnGuerra.Vista.UnidadView
+  spriteRenderer: {fileID: 2612869679881854703}
+  barraVidaBase: {fileID: 8156867662229588025}
+  barraVidaFill: {fileID: 273707605790232550}
+  spriteAldeano: {fileID: 0}
+  spriteEspadachin: {fileID: 0}
+  spritePiquero: {fileID: -594197781322936934, guid: 31e15b074d7344a3b99376dd4f70eb1d, type: 3}
+  spriteArquero: {fileID: 0}
+--- !u!1 &8156867662229588025 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 4982307177887614150, guid: b1dab38ea60aad6498689fe7eeb8a26f, type: 3}
+  m_PrefabInstance: {fileID: 3753668998111038719}
+  m_PrefabAsset: {fileID: 0}

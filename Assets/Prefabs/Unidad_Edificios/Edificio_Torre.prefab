@@ -128,6 +128,10 @@ PrefabInstance:
       propertyPath: m_Sprite
       value: 
       objectReference: {fileID: 21300000, guid: 9150ff9a3f88646ddaf1ed327afa1315, type: 3}
+    - target: {fileID: 2182116886234074571, guid: 50eaa130059328944a042d4c8b7decfa, type: 3}
+      propertyPath: m_SortingOrder
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 3832585816191636963, guid: 50eaa130059328944a042d4c8b7decfa, type: 3}
       propertyPath: m_LocalPosition.x
       value: 0
@@ -202,10 +206,52 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 1734685320681357562, guid: 50eaa130059328944a042d4c8b7decfa, type: 3}
       insertIndex: -1
       addedObject: {fileID: 8722733021682640507}
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 6036574617676346069, guid: 50eaa130059328944a042d4c8b7decfa, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 6867033388854334457}
   m_SourcePrefab: {fileID: 100100000, guid: 50eaa130059328944a042d4c8b7decfa, type: 3}
+--- !u!212 &216430367397122410 stripped
+SpriteRenderer:
+  m_CorrespondingSourceObject: {fileID: 2182116886234074571, guid: 50eaa130059328944a042d4c8b7decfa, type: 3}
+  m_PrefabInstance: {fileID: 2110083736779168929}
+  m_PrefabAsset: {fileID: 0}
 --- !u!4 &385711845912157275 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 1734685320681357562, guid: 50eaa130059328944a042d4c8b7decfa, type: 3}
+  m_PrefabInstance: {fileID: 2110083736779168929}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1 &5660669980924046964 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 6036574617676346069, guid: 50eaa130059328944a042d4c8b7decfa, type: 3}
+  m_PrefabInstance: {fileID: 2110083736779168929}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &6867033388854334457
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5660669980924046964}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 47574fb2a899ac34a833849cd972036f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ImperiosEnGuerra.Vista.EdificioView
+  spriteRenderer: {fileID: 216430367397122410}
+  fondoBarra: {fileID: 7404606289469753898}
+  rellenoSalud: {fileID: 6718287414699144621}
+  spriteTownCenter: {fileID: 0}
+  spriteHouse: {fileID: 0}
+  spriteTaller: {fileID: 0}
+  spriteDefensa: {fileID: 21300000, guid: 9150ff9a3f88646ddaf1ed327afa1315, type: 3}
+--- !u!224 &6718287414699144621 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 4644516566389729548, guid: 50eaa130059328944a042d4c8b7decfa, type: 3}
+  m_PrefabInstance: {fileID: 2110083736779168929}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1 &7404606289469753898 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 8902200064575461003, guid: 50eaa130059328944a042d4c8b7decfa, type: 3}
   m_PrefabInstance: {fileID: 2110083736779168929}
   m_PrefabAsset: {fileID: 0}
