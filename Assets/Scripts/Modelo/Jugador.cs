@@ -285,5 +285,68 @@ namespace ImperiosEnGuerra.Modelo
                 }
             });
         }
+
+        // -------------------------------------------------------------
+        // DEFENSA AUTOMATICA: UN hilo dedicado por cada Torre/Defensa, que
+        // revisa periodicamente si hay algo del rival dentro de su rango y
+        // dispara usando el propio Defensa.Atacar() (que ya valida rango
+        // con DistanciaManhattanHasta, consistente con el resto del juego).
+        // El hilo sigue vivo mientras la torre no este destruida; si aun no
+        // termino de construirse, simplemente no dispara todavia.
+        // -------------------------------------------------------------
+        public void IniciarDefensaAutomatica(Defensa torre, Jugador rival, int intervaloMs = 2000)
+        {
+            if (torre == null || rival == null) return;
+
+            Task.Run(() =>
+            {
+                while (!torre.EstaDestruido)
+                {
+                    Thread.Sleep(intervaloMs);
+
+                    if (!torre.EstaConstruido) continue; // sigue en construccion, todavia no dispara
+
+                    var objetivo = BuscarObjetivoEnRango(torre, rival);
+                    if (objetivo != null && torre.Atacar(objetivo))
+                    {
+                        Eventos.Enqueue(new EventoJuego("Ataque", $"{torre.Nombre} disparó y causó {torre.DanioAtaque} de daño."));
+                    }
+                }
+            });
+        }
+
+        // Busca, entre las unidades y edificios del rival, el mas cercano
+        // que este dentro del RangoAtaque de la torre (usando la misma
+        // distancia Manhattan que usa el resto del Modelo, no distancia
+        // euclidiana como se hacia antes en la Vista).
+        private IObjetivoAtacable BuscarObjetivoEnRango(Defensa torre, Jugador rival)
+        {
+            IObjetivoAtacable masCercano = null;
+            int menorDistancia = int.MaxValue;
+
+            foreach (var unidad in rival.Unidades.Values)
+            {
+                if (unidad.EstaDestruido) continue;
+                int distancia = torre.Posicion.DistanciaManhattanHasta(unidad.Posicion);
+                if (distancia <= torre.RangoAtaque && distancia < menorDistancia)
+                {
+                    menorDistancia = distancia;
+                    masCercano = unidad;
+                }
+            }
+
+            foreach (var edificio in rival.Edificios.Values)
+            {
+                if (edificio.EstaDestruido) continue;
+                int distancia = torre.Posicion.DistanciaManhattanHasta(edificio.Posicion);
+                if (distancia <= torre.RangoAtaque && distancia < menorDistancia)
+                {
+                    menorDistancia = distancia;
+                    masCercano = edificio;
+                }
+            }
+
+            return masCercano;
+        }
     }
 }
