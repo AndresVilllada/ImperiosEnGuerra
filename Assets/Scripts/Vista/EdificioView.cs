@@ -86,18 +86,14 @@ namespace ImperiosEnGuerra.Vista
             if (rellenoSalud != null)
             {
                 // Se parte de la escala ORIGINAL del prefab y solo se
-                // achica el eje X (progreso de construccion o vida).
+                // achica el eje X (progreso de construccion o vida). Los
+                // numeros (0 a 1) ya vienen calculados por el Modelo
+                // (FraccionConstruccion y PorcentajeVida): la Vista solo los
+                // aplica, no hace divisiones.
                 var escala = escalaInicialRelleno;
 
-                if (!listo)
-                {
-                    escala.x = escalaInicialRelleno.x * Mathf.Clamp01(EdificioModelo.ProgresoConstruccion / 100f);
-                }
-                else
-                {
-                    float porcentajeVida = (float)EdificioModelo.VidaActual / EdificioModelo.VidaMaxima;
-                    escala.x = escalaInicialRelleno.x * Mathf.Clamp01(porcentajeVida);
-                }
+                double fraccion = listo ? EdificioModelo.PorcentajeVida : EdificioModelo.FraccionConstruccion;
+                escala.x = escalaInicialRelleno.x * (float)fraccion;
 
                 rellenoSalud.localScale = escala;
             }
@@ -134,7 +130,11 @@ namespace ImperiosEnGuerra.Vista
 
             while (transcurrido < duracionDesvanecimiento)
             {
-                transcurrido += Time.deltaTime;
+                // unscaledDeltaTime (y no deltaTime): FinPartidaView pone
+                // Time.timeScale = 0 al mostrar victoria/derrota, y con deltaTime
+                // este desvanecimiento se quedaria congelado a medias justo en
+                // el momento en que cae el Centro Urbano.
+                transcurrido += Time.unscaledDeltaTime;
 
                 if (spriteRenderer != null)
                 {

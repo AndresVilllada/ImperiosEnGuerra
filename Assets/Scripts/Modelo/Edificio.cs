@@ -17,6 +17,15 @@ namespace ImperiosEnGuerra.Modelo
         public bool EstaConstruido { get; private set; }
         public int ProgresoConstruccion { get; private set; } // 0-100
         public bool EstaDestruido => VidaActual <= 0;
+
+        // Vida actual como fraccion entre 0.0 y 1.0 (la calcula el Modelo, la
+        // Vista solo la aplica). RecibirDanio nunca baja de 0.
+        public double PorcentajeVida => (double)VidaActual / VidaMaxima;
+
+        // Avance de la construccion como fraccion entre 0.0 y 1.0 (0 = recien
+        // empezada, 1 = terminada). ProgresoConstruccion ya esta acotado a
+        // 0-100 en AvanzarConstruccion.
+        public double FraccionConstruccion => ProgresoConstruccion / 100.0;
         public IReadOnlyDictionary<TipoRecurso, int> Costo { get; protected set; }
 
         // Aviso de "este edificio acaba de ser destruido". Se dispara UNA
@@ -124,15 +133,17 @@ namespace ImperiosEnGuerra.Modelo
         }
     }
  
-    // Torre/muralla defensiva: se construye en Piedra (no Madera, a
+    // Torre/muralla defensiva: se construye con Piedra y Metal (no Madera, a
     // diferencia de los demás) y puede atacar sola a quien entre en su rango.
+    // El Metal (hierro) se agrego al costo para que disputar las vetas de
+    // hierro del mapa tenga sentido: antes ningun costo lo usaba.
     public class Defensa : Edificio
     {
         public int DanioAtaque { get; }
         public int RangoAtaque { get; }
  
         public Defensa(Posicion posicion, int danioAtaque = 8, int rangoAtaque = 3)
-            : base("Defensa", posicion, vidaMaxima: 250, costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Piedra, 120 } })
+            : base("Defensa", posicion, vidaMaxima: 250, costo: new Dictionary<TipoRecurso, int> { { TipoRecurso.Piedra, 80 }, { TipoRecurso.Metal, 40 } })
         {
             if (danioAtaque < 0) throw new ArgumentException("DanioAtaque no puede ser negativo.");
             if (rangoAtaque <= 0) throw new ArgumentException("RangoAtaque debe ser mayor que cero.");

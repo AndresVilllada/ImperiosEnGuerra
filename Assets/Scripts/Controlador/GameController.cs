@@ -56,6 +56,10 @@ namespace ImperiosEnGuerra.Controlador
         private GestorArchivos archivos;
         private CancellationTokenSource cancelacionLog;
 
+        // true cuando ya se mostro el panel de victoria/derrota: a partir de
+        // ahi Update() no hace nada mas.
+        private bool finDePartidaMostrado;
+
         // Los dos controladores especializados (se crean en InicializarPartida).
         private SincronizacionVistaController sincronizacionVista;
         private InputController inputController;
@@ -93,7 +97,7 @@ namespace ImperiosEnGuerra.Controlador
                 ElegirPrefabUnidad, ElegirPrefabEdificio,
                 mapa, jugadorGrecia, jugadorIA);
 
-            inputController = new InputController(mapa, jugadorGrecia);
+            inputController = new InputController(jugadorGrecia);
 
             // 4. Archivos: configuracion.txt de una vez, y arrancamos el
             // hilo que va a ir escribiendo log_partida.txt solo.
@@ -106,26 +110,41 @@ namespace ImperiosEnGuerra.Controlador
             // propio hilo, cada 4 segundos.
             cerebroIA = new JugadorIA(partida, jugadorIA, jugadorGrecia);
             cerebroIA.Iniciar();
+
+            // (La postura defensiva de las tropas de Grecia y el disparo de
+            // las Torres ya no se arrancan aqui: son reglas del juego y las
+            // activa el Modelo — ver ConfiguradorPartida y
+            // Jugador.ConstruirEdificio.)
+
+            // 6. Indicador en pantalla del cooldown de entrenamiento. Se crea
+            // por codigo (no hace falta agregar nada en la escena ni en el
+            // Inspector) y solo LEE del Modelo, mediante una funcion.
+            var indicadorCooldown = gameObject.AddComponent<EntrenamientoCooldownView>();
+            indicadorCooldown.Configurar(() => jugadorGrecia.EntrenamientoDisponible, () => jugadorGrecia.SegundosParaPoderEntrenar);
         }
 
         private void Update()
         {
-            // OJO: Le preguntamos a la Partida (Modelo) si ya alguien ganó
-            // antes de dibujar recursos o mover aldeanos.
+            // La partida ya termino y el resultado ya se mostro: no se
+            // sincroniza nada mas ni se lee input (asi, con el panel de
+            // victoria/derrota a la vista, ya no se pueden dar ordenes).
+            if (finDePartidaMostrado) return;
+
+            // Le preguntamos a la Partida (Modelo) si ya alguien gano.
             bool yaAcabo = partida.VerificarGanador();
 
-            // Revisa si la partida ya termino, para guardar el resultado
-            // final UNA sola vez y mostrar el panel de victoria/derrota.
-            if (yaAcabo && cancelacionLog != null)
+            if (yaAcabo)
             {
-                archivos.GuardarResultadoFinal(partida);
-                cancelacionLog.Cancel();
-                cancelacionLog = null; // evita que se vuelva a guardar en el siguiente frame
+                // Ultima sincronizacion: que la Vista refleje el estado final
+                // (por ejemplo, el Centro Urbano destruido empieza su
+                // desvanecimiento; esa animacion sigue sola despues).
+                sincronizacionVista.Sincronizar();
 
-                // AQUI CONECTAMOS CON TUS PANELES (FinPartidaView)
+                // AQUI CONECTAMOS CON TUS PANELES (FinPartidaView). Quien
+                // gano lo responde la Partida (Modelo), no se compara aqui.
                 if (finPartidaView != null)
                 {
-                    if (partida.Ganador == jugadorGrecia.Nombre)
+                    if (partida.GanoJugador(jugadorGrecia))
                     {
                         finPartidaView.MostrarVictoria();
                     }
@@ -135,7 +154,13 @@ namespace ImperiosEnGuerra.Controlador
                     }
                 }
 
-                return; // Cortamos el Update aquí para que no siga dibujando cosas si el juego ya acabó
+                // La partida termino: se detienen TODOS los hilos del juego
+                // (ver DetenerHilos). resultado_final.txt lo guarda solo
+                // GestorArchivos al ver la Partida finalizada.
+                DetenerHilos();
+
+                finDePartidaMostrado = true;
+                return;
             }
 
             // Modelo -> Vista: recursos, unidades, edificios y HUD.
@@ -143,9 +168,7 @@ namespace ImperiosEnGuerra.Controlador
 
             // Jugador -> Modelo: seleccionar edificios/unidades propias con
             // clic, elegir accion con teclas, mover/atacar con un segundo
-            // clic. Va al final del Update porque ya cortamos arriba con
-            // "return" si la partida termino, asi que si llegamos hasta aqui
-            // es porque el juego sigue en curso.
+            // clic.
             inputController.ManejarInput();
         }
 
@@ -173,9 +196,23 @@ namespace ImperiosEnGuerra.Controlador
         private void OnDestroy()
         {
             // Buena practica: si el objeto se destruye (se cierra el juego,
-            // se cambia de escena), detenemos los hilos en vez de dejarlos
-            // corriendo en el vacio.
+            // se cambia de escena, se sale de Play en el Editor), detenemos
+            // los hilos en vez de dejarlos corriendo en el vacio.
+            DetenerHilos();
+        }
+
+        // Detiene, de forma ordenada, TODOS los hilos de la partida:
+        //  - los dos ciclos de la IA (economia y militar),
+        //  - los hilos de cada Jugador (recoleccion, construccion,
+        //    entrenamiento, movimiento, torres y defensa automatica),
+        //  - el hilo que escribe el log.
+        // Todos terminan al cancelarse su CancellationToken (sus Task.Delay
+        // lanzan OperationCanceledException). Es seguro llamarlo varias veces.
+        private void DetenerHilos()
+        {
             cerebroIA?.Detener();
+            jugadorGrecia?.DetenerHilos();
+            jugadorIA?.DetenerHilos();
             cancelacionLog?.Cancel();
         }
     }

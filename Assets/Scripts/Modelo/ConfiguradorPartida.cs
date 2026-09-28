@@ -1,9 +1,11 @@
+using System;
+
 namespace ImperiosEnGuerra.Modelo
 {
     // ---------------------------------------------------------------------
     // CONFIGURADORPARTIDA: arma el ESTADO INICIAL del juego — el mapa, los
     // dos jugadores, los Centros Urbanos, los depositos de recurso, los
-    // aldeanos que arrancan recolectando, y la Partida que los une.
+    // aldeanos que arrancan trabajando, y la Partida que los une.
     //
     // Vive en el Modelo (no en el Controlador) porque decidir DONDE arranca
     // cada bando, CUANTOS recursos hay y CUANTOS aldeanos tiene cada uno son
@@ -22,6 +24,40 @@ namespace ImperiosEnGuerra.Modelo
         public Jugador JugadorRival { get; private set; } // el que controla JugadorIA (no confundir con la clase JugadorIA)
         public Partida Partida { get; private set; }
 
+        // -------------------------------------------------------------
+        // DEPOSITOS DE RECURSO: 22 en total (8 arboles de Madera, 6 vetas de
+        // Oro, 4 piedras y 4 vetas de hierro/Metal). Estan repartidos a
+        // proposito para que haya que DISPUTARLOS:
+        //   - cerca de cada base (Grecia abajo-izquierda, la IA arriba-
+        //     derecha): pocos, de modo que se agotan y hay que salir a buscar,
+        //   - en las bandas laterales y en el CENTRO del mapa: son los que
+        //     ambos bandos quieren, y donde sus aldeanos se cruzan.
+        // Cada deposito es chico (150-250) para que se agoten y los
+        // aldeanos tengan que ir relevandose al siguiente mas cercano.
+        // Las posiciones son casi simetricas respecto al centro del mapa
+        // ((x,y) <-> (19-x,19-y)) para que ningun bando parta con ventaja.
+        // -------------------------------------------------------------
+        private static readonly (TipoRecurso Tipo, int X, int Y, int Cantidad)[] Depositos =
+        {
+            // Madera (arboles): 3 cerca de cada base + 2 en el centro
+            (TipoRecurso.Madera, 5, 4, 200), (TipoRecurso.Madera, 4, 7, 200), (TipoRecurso.Madera, 7, 6, 200),
+            (TipoRecurso.Madera, 14, 15, 200), (TipoRecurso.Madera, 15, 12, 200), (TipoRecurso.Madera, 12, 13, 200),
+            (TipoRecurso.Madera, 9, 10, 200), (TipoRecurso.Madera, 10, 9, 200),
+
+            // Oro: 1 cerca de cada base, 1 en cada banda y 2 en el centro
+            (TipoRecurso.Oro, 8, 3, 250), (TipoRecurso.Oro, 11, 16, 250),
+            (TipoRecurso.Oro, 5, 11, 250), (TipoRecurso.Oro, 14, 8, 250),
+            (TipoRecurso.Oro, 9, 9, 250), (TipoRecurso.Oro, 10, 10, 250),
+
+            // Piedra: 2 por lado
+            (TipoRecurso.Piedra, 6, 9, 150), (TipoRecurso.Piedra, 13, 10, 150),
+            (TipoRecurso.Piedra, 4, 14, 150), (TipoRecurso.Piedra, 15, 5, 150),
+
+            // Metal (hierro): 2 por lado
+            (TipoRecurso.Metal, 12, 4, 150), (TipoRecurso.Metal, 7, 15, 150),
+            (TipoRecurso.Metal, 4, 12, 150), (TipoRecurso.Metal, 15, 7, 150),
+        };
+
         public void Configurar()
         {
             // 1. El mapa unico y compartido (20x20, ya coincide con lo que
@@ -33,6 +69,18 @@ namespace ImperiosEnGuerra.Modelo
             // otro lado, como se definio en el diseño del juego).
             var jugadorGrecia = new Jugador("Grecia", mapa);
             var jugadorRival = new Jugador("El Resto", mapa);
+
+            // Cada jugador necesita conocer a su rival: las Torres y las
+            // tropas disparan contra el. Se asigna aqui, una sola vez.
+            jugadorGrecia.DefinirRival(jugadorRival);
+            jugadorRival.DefinirRival(jugadorGrecia);
+
+            // Ritmo de entrenamiento: una tropa cada N segundos por jugador.
+            // Es una regla de balance (vive aqui, en el Modelo). El humano
+            // tiene 8 s y la IA 10 s: como el humano debe dar cada orden a
+            // mano, se le da algo de ventaja.
+            jugadorGrecia.CooldownEntrenamiento = TimeSpan.FromSeconds(8);
+            jugadorRival.CooldownEntrenamiento = TimeSpan.FromSeconds(10);
 
             var posicionCentroGrecia = new Posicion(2, 2);
             var posicionCentroRival = new Posicion(17, 17);
@@ -51,60 +99,45 @@ namespace ImperiosEnGuerra.Modelo
             // vista solo (via SincronizacionVistaController) — no hace falta
             // instanciarlos aqui a mano.
 
-            // 3. Esparcir algunos depositos de recurso por el mapa (numeros
-            // de ejemplo, se pueden ajustar facil mas adelante).
-            // ColocarDeposito DEVUELVE el Recurso creado, porque lo
-            // necesitamos mas abajo para mandar a los aldeanos a recolectar
-            // de un deposito especifico.
-            // Cantidades subidas de 300/400/250/200: con dos aldeanos por
-            // bando recolectando a 5 por segundo, los depositos originales
-            // se agotaban en menos de un minuto y despues nadie tenia
-            // ingresos (ni siquiera la IA, que nunca llegaba a entrenar).
-            var posicionOro = new Posicion(5, 10);
-            var posicionMadera = new Posicion(8, 4);
-            var depositoOro = ColocarDeposito(mapa, TipoRecurso.Oro, posicionOro, 1500);
-            var depositoMadera = ColocarDeposito(mapa, TipoRecurso.Madera, posicionMadera, 1500);
-            ColocarDeposito(mapa, TipoRecurso.Piedra, new Posicion(12, 15), 500);
-            ColocarDeposito(mapa, TipoRecurso.Metal, new Posicion(15, 6), 500);
+            // 3. Esparcir los depositos de recurso por el mapa (ver la tabla
+            // Depositos, arriba).
+            foreach (var (tipo, x, y, cantidad) in Depositos)
+            {
+                mapa.ColocarRecurso(new Posicion(x, y), new Recurso(tipo, cantidad));
+            }
 
             // 4. La partida que orquesta a los dos jugadores.
             var partida = new Partida(jugadorGrecia, jugadorRival);
 
-            // 5. SOLUCION DEFINITIVA al problema de "nunca hay recursos
-            // suficientes": antes ningun jugador recolectaba nada, asi que
-            // se quedaban fijos en los 100 iniciales para siempre y jamas
-            // alcanzaba para el Taller (120 Madera). Ahora cada jugador
-            // arranca con UN Villager ya recolectando del deposito de
-            // Madera — asi la economia avanza sola con el tiempo, tal como
-            // pide la guia, y los costos de construccion empiezan a tener
-            // sentido real.
+            // 5. Los aldeanos iniciales: 3 por bando, cada uno con un TIPO de
+            // recurso asignado. Ya no recolectan "desde su casilla" (antes
+            // sacaban de un deposito fijo sin importar la distancia): cada
+            // uno CAMINA hasta el deposito mas cercano de su tipo, recolecta,
+            // y cuando se agota va por el siguiente. Los dos bandos comparten
+            // los depositos, asi que sus aldeanos compiten por ellos.
             //
-            // Grecia: el deposito de Madera (8,4) es el mas cercano a su
-            // Centro Urbano en (2,2). Lo ubicamos justo al lado del
-            // Centro Urbano, en una celda libre.
-            CrearAldeanoRecolector(mapa, jugadorGrecia, new Posicion(3, 2), depositoMadera, posicionMadera);
+            // Grecia: Madera (para el Taller y las Casas), Oro (para las
+            // tropas) y Piedra (para las Torres). El Metal tambien se usa en
+            // las Torres, pero se parte con 100: para conseguir mas hay que
+            // mandar un aldeano a una veta de hierro (clic en el aldeano y
+            // luego en el deposito).
+            CrearAldeano(mapa, jugadorGrecia, new Posicion(3, 2), TipoRecurso.Madera);
+            CrearAldeano(mapa, jugadorGrecia, new Posicion(2, 3), TipoRecurso.Oro);
+            CrearAldeano(mapa, jugadorGrecia, new Posicion(3, 3), TipoRecurso.Piedra);
 
-            // Segundo aldeano de Grecia, dedicado al Oro: las tropas cuestan
-            // Oro y el primer aldeano solo recolecta Madera, asi que sin
-            // este el jugador se quedaria sin poder entrenar despues de
-            // unas 3 tropas (los 100 de Oro iniciales no se reponen).
-            CrearAldeanoRecolector(mapa, jugadorGrecia, new Posicion(2, 3), depositoOro, posicionOro);
+            // El Resto (IA): Madera (para su Taller y Casas) y Oro (las
+            // tropas cuestan Oro), mas un tercer aldeano en Madera para que
+            // tenga la misma cantidad de trabajadores que Grecia.
+            CrearAldeano(mapa, jugadorRival, new Posicion(16, 17), TipoRecurso.Madera);
+            CrearAldeano(mapa, jugadorRival, new Posicion(17, 16), TipoRecurso.Oro);
+            CrearAldeano(mapa, jugadorRival, new Posicion(16, 16), TipoRecurso.Madera);
 
-            // El Resto (IA): usamos el mismo deposito de Madera, porque es
-            // justo el recurso que JugadorIA necesita primero para poder
-            // construir su Taller (ver JugadorIA.DecidirYEjecutarAccion).
-            // Queda mas lejos de su Centro Urbano (17,17), pero el
-            // Villager igual llega recolectando con el tiempo — no hace
-            // falta que este pegado al deposito, IniciarRecoleccion no
-            // valida distancia.
-            CrearAldeanoRecolector(mapa, jugadorRival, new Posicion(16, 17), depositoMadera, posicionMadera);
-
-            // Segundo aldeano de la IA, dedicado al Oro. Este es el que
-            // resuelve que la IA nunca entrenara tropas: JugadorIA solo
-            // entrena cuando tiene 150 o mas de Oro, y con un unico
-            // aldeano en Madera su Oro se quedaba fijo en 100 para siempre
-            // (asi que solo construia Casas cada 4 segundos).
-            CrearAldeanoRecolector(mapa, jugadorRival, new Posicion(17, 16), depositoOro, posicionOro);
+            // Postura defensiva de las tropas de Grecia: atacan solas lo que
+            // tengan dentro de su rango (sin moverse). Es una regla de la
+            // partida, asi que se activa aqui, en el Modelo. Sin esto el
+            // jugador humano tendria que dar una orden por CADA golpe de CADA
+            // tropa.
+            jugadorGrecia.IniciarDefensaAutomaticaDeTropas();
 
             // Guardamos el resultado para que el Controlador lo lea.
             Mapa = mapa;
@@ -113,25 +146,15 @@ namespace ImperiosEnGuerra.Modelo
             Partida = partida;
         }
 
-        // Pequeño helper para no repetir 3 lineas por cada deposito. Devuelve
-        // el Recurso creado porque lo necesitamos para mandar aldeanos a
-        // recolectar de un deposito puntual, no solo para pintarlo en el mapa.
-        private Recurso ColocarDeposito(Mapa mapa, TipoRecurso tipo, Posicion posicion, int cantidad)
-        {
-            var recurso = new Recurso(tipo, cantidad);
-            mapa.ColocarRecurso(posicion, recurso);
-            return recurso;
-        }
-
         // Crea un Villager, lo registra en el jugador y en el mapa, y lo
-        // pone a recolectar del deposito indicado (IniciarRecoleccion lanza
-        // su propio hilo, asi que esto no bloquea nada).
-        private Villager CrearAldeanoRecolector(Mapa mapa, Jugador jugador, Posicion posicionInicial, Recurso deposito, Posicion posicionDeposito)
+        // pone a trabajar en el tipo de recurso indicado (IniciarRecoleccion
+        // lanza su propio hilo, asi que esto no bloquea nada).
+        private Villager CrearAldeano(Mapa mapa, Jugador jugador, Posicion posicionInicial, TipoRecurso tipo)
         {
             var aldeano = new Villager(posicionInicial);
             jugador.AgregarUnidad(aldeano);
             mapa.ColocarUnidad(posicionInicial, aldeano);
-            jugador.IniciarRecoleccion(aldeano, deposito, posicionDeposito);
+            jugador.IniciarRecoleccion(aldeano, tipo);
             return aldeano;
         }
     }

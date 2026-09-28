@@ -16,6 +16,16 @@ namespace ImperiosEnGuerra.Controlador
     // llama desde su Update(). Los Prefabs siguen asignandose en el
     // Inspector de GameController; aqui solo se recibe la "traduccion"
     // Modelo -> Prefab como funciones (ver constructor).
+    //
+    // OPTIMIZACION: esto corre en el hilo principal en CADA frame, asi que
+    // su costo crece con la cantidad de unidades. Por eso:
+    //   - se guarda la VISTA ya tipada (UnidadView/EdificioView) y
+    //     GetComponent se llama una sola vez, al crearla (antes se llamaba
+    //     por cada unidad, en cada frame);
+    //   - se recorre el ConcurrentDictionary directamente (foreach sobre el
+    //     diccionario) en vez de pedir .Values, que crea una copia nueva de
+    //     la coleccion en cada llamada;
+    //   - el HUD solo se toca cuando un recurso CAMBIA de valor.
     // ---------------------------------------------------------------------
     public class SincronizacionVistaController
     {
@@ -29,11 +39,19 @@ namespace ImperiosEnGuerra.Controlador
         private readonly Jugador jugadorGrecia;
         private readonly Jugador jugadorIA;
 
-        // Recuerdan que GameObject visual le corresponde a cada Unidad/
-        // Edificio del Modelo (por su Id), para no crear duplicados y para
-        // poder actualizarlos frame a frame.
-        private readonly Dictionary<Guid, GameObject> vistasUnidades = new Dictionary<Guid, GameObject>();
-        private readonly Dictionary<Guid, GameObject> vistasEdificios = new Dictionary<Guid, GameObject>();
+        // Recuerdan que vista le corresponde a cada Unidad/Edificio del
+        // Modelo (por su Id), para no crear duplicados y para poder
+        // actualizarlas frame a frame. Se guarda el componente View (no el
+        // GameObject) para no tener que buscarlo con GetComponent cada frame.
+        private readonly Dictionary<Guid, UnidadView> vistasUnidades = new Dictionary<Guid, UnidadView>();
+        private readonly Dictionary<Guid, EdificioView> vistasEdificios = new Dictionary<Guid, EdificioView>();
+
+        // Ultimos valores mostrados en el HUD (-1 = todavia no se mostro
+        // nada), para actualizarlo solo cuando algo cambia.
+        private int ultimoOro = -1;
+        private int ultimaMadera = -1;
+        private int ultimaPiedra = -1;
+        private int ultimoMetal = -1;
 
         public SincronizacionVistaController(
             MapaView mapaView,
@@ -70,22 +88,32 @@ namespace ImperiosEnGuerra.Controlador
             // (Grecia) — logica que ya trae hecha UnidadView/EdificioView.
             ActualizarUnidadesDe(jugadorGrecia, esDeIA: false);
             ActualizarUnidadesDe(jugadorIA, esDeIA: true);
-            ActualizarEdificiosDe(jugadorGrecia, jugadorIA, esDeIA: false);
-            ActualizarEdificiosDe(jugadorIA, jugadorGrecia, esDeIA: true);
+            ActualizarEdificiosDe(jugadorGrecia, esDeIA: false);
+            ActualizarEdificiosDe(jugadorIA, esDeIA: true);
 
             ActualizarHUD();
         }
 
         // HUD: recursos actuales de Grecia (el jugador humano; el HUD no
-        // muestra los recursos de la IA, solo los del jugador real).
+        // muestra los recursos de la IA, solo los del jugador real). Solo se
+        // actualiza el texto de un recurso cuando su valor cambio desde la
+        // ultima vez (cambiar un texto de TextMeshPro fuerza regenerar su
+        // malla, y antes se hacia 4 veces por frame aunque nada cambiara).
         private void ActualizarHUD()
         {
             if (hud == null) return;
 
-            hud.ActualizarOro(jugadorGrecia.Recursos[TipoRecurso.Oro]);
-            hud.ActualizarMadera(jugadorGrecia.Recursos[TipoRecurso.Madera]);
-            hud.ActualizarPiedra(jugadorGrecia.Recursos[TipoRecurso.Piedra]);
-            hud.ActualizarMetal(jugadorGrecia.Recursos[TipoRecurso.Metal]);
+            int oro = jugadorGrecia.Recursos[TipoRecurso.Oro];
+            if (oro != ultimoOro) { hud.ActualizarOro(oro); ultimoOro = oro; }
+
+            int madera = jugadorGrecia.Recursos[TipoRecurso.Madera];
+            if (madera != ultimaMadera) { hud.ActualizarMadera(madera); ultimaMadera = madera; }
+
+            int piedra = jugadorGrecia.Recursos[TipoRecurso.Piedra];
+            if (piedra != ultimaPiedra) { hud.ActualizarPiedra(piedra); ultimaPiedra = piedra; }
+
+            int metal = jugadorGrecia.Recursos[TipoRecurso.Metal];
+            if (metal != ultimoMetal) { hud.ActualizarMetal(metal); ultimoMetal = metal; }
         }
 
         // Crea la vista de cada Unidad nueva que aparezca en "jugador"
@@ -96,9 +124,16 @@ namespace ImperiosEnGuerra.Controlador
         // instanciarla de nuevo si ya no tiene vista viva.
         private void ActualizarUnidadesDe(Jugador jugador, bool esDeIA)
         {
-            foreach (var unidad in jugador.Unidades.Values)
+            // foreach directo sobre el ConcurrentDictionary: es seguro aunque
+            // otro hilo agregue unidades al mismo tiempo (el enumerador es
+            // "debilmente consistente") y no copia la coleccion.
+            foreach (var par in jugador.Unidades)
             {
-                if (!vistasUnidades.TryGetValue(unidad.Id, out var vistaGO) || vistaGO == null)
+                var unidad = par.Value;
+
+                // "vista == null" cubre las dos situaciones: nunca tuvo vista,
+                // o ya se destruyo (Unity sobrecarga == para objetos destruidos).
+                if (!vistasUnidades.TryGetValue(unidad.Id, out var vista) || vista == null)
                 {
                     if (unidad.EstaDestruido) continue; // nunca tuvo vista y ya murio, no crear nada
 
@@ -106,26 +141,28 @@ namespace ImperiosEnGuerra.Controlador
                     if (prefab == null) continue; // tipo de unidad sin prefab asignado todavia
 
                     var instancia = UnityEngine.Object.Instantiate(prefab, padreVistas);
-                    instancia.GetComponent<UnidadView>().Inicializar(unidad, esDeIA);
-                    vistasUnidades[unidad.Id] = instancia;
+                    var nuevaVista = instancia.GetComponent<UnidadView>(); // UNA sola vez, al crearla
+                    nuevaVista.Inicializar(unidad, esDeIA);
+                    vistasUnidades[unidad.Id] = nuevaVista;
                 }
                 else
                 {
-                    vistaGO.GetComponent<UnidadView>().ActualizarVisual();
+                    vista.ActualizarVisual();
                 }
             }
         }
 
-        // Mismo patron que ActualizarUnidadesDe, pero para Edificios. Ademas,
-        // cuando aparece una Defensa (Torre) nueva, le pedimos al propio
-        // Jugador que arranque su hilo de disparo automatico (ver
-        // Jugador.IniciarDefensaAutomatica en el Modelo) — el Controlador
-        // solo dispara ese aviso, no decide nada del combate en si.
-        private void ActualizarEdificiosDe(Jugador jugador, Jugador rival, bool esDeIA)
+        // Mismo patron que ActualizarUnidadesDe, pero para Edificios. Aqui
+        // solo se crea/actualiza la VISTA: el disparo automatico de las
+        // Torres ya no depende de este metodo (antes se arrancaba aqui, al
+        // aparecer la vista; ahora lo arranca el Modelo al construirlas).
+        private void ActualizarEdificiosDe(Jugador jugador, bool esDeIA)
         {
-            foreach (var edificio in jugador.Edificios.Values)
+            foreach (var par in jugador.Edificios)
             {
-                if (!vistasEdificios.TryGetValue(edificio.Id, out var vistaGO) || vistaGO == null)
+                var edificio = par.Value;
+
+                if (!vistasEdificios.TryGetValue(edificio.Id, out var vista) || vista == null)
                 {
                     if (edificio.EstaDestruido) continue;
 
@@ -133,17 +170,13 @@ namespace ImperiosEnGuerra.Controlador
                     if (prefab == null) continue;
 
                     var instancia = UnityEngine.Object.Instantiate(prefab, padreVistas);
-                    instancia.GetComponent<EdificioView>().Inicializar(edificio, esDeIA);
-                    vistasEdificios[edificio.Id] = instancia;
-
-                    if (edificio is Defensa torre)
-                    {
-                        jugador.IniciarDefensaAutomatica(torre, rival);
-                    }
+                    var nuevaVista = instancia.GetComponent<EdificioView>();
+                    nuevaVista.Inicializar(edificio, esDeIA);
+                    vistasEdificios[edificio.Id] = nuevaVista;
                 }
                 else
                 {
-                    vistaGO.GetComponent<EdificioView>().ActualizarVisual();
+                    vista.ActualizarVisual();
                 }
             }
         }

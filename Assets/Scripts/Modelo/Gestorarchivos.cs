@@ -95,30 +95,84 @@ namespace ImperiosEnGuerra.Modelo
         // Lanza el hilo que drena las 3 colas de eventos cada 300ms mientras
         // la partida siga en curso. Llamar esto UNA vez, justo después de
         // crear la Partida (ver comentario de ejemplo al final del archivo).
+        //
+        // Espera con Task.Delay (antes Thread.Sleep): mientras espera NO
+        // ocupa un hilo del pool. El hilo termina en dos casos:
+        //   - la Partida quedo Finalizada: sale del bucle por su cuenta, o
+        //   - le cancelan el token (cts.Cancel): el Delay lanza
+        //     OperationCanceledException y sale del bucle.
+        // En ambos casos el bloque "finally" hace un ULTIMO vaciado de las
+        // colas (para que los eventos generados justo antes del fin, por
+        // ejemplo el golpe que destruye el Centro Urbano, tambien queden en
+        // el log) y, SI la partida ya termino, guarda resultado_final.txt.
+        // Asi el archivo del resultado se escribe una sola vez y sin que el
+        // Controlador tenga que ordenarlo (antes GameController decidia
+        // cuando guardarlo). Si se cierra el juego con la partida en curso
+        // NO se escribe ningun resultado.
         public CancellationTokenSource IniciarEscuchaDeEventos(Partida partida)
         {
             var cts = new CancellationTokenSource();
 
-            Task.Run(() =>
+            Task.Run(async () =>
             {
-                while (!cts.IsCancellationRequested)
+                try
                 {
-                    DrenarCola(partida.Jugador1.Nombre, partida.Jugador1.Eventos);
-                    DrenarCola(partida.Jugador2.Nombre, partida.Jugador2.Eventos);
-                    DrenarCola("Sistema", partida.Eventos);
+                    while (!cts.IsCancellationRequested)
+                    {
+                        DrenarTodas(partida);
 
-                    Thread.Sleep(300);
+                        if (partida.Estado == EstadoPartida.Finalizada) break;
+
+                        await Task.Delay(300, cts.Token);
+                    }
                 }
-            }, cts.Token);
+                catch (OperationCanceledException)
+                {
+                    // cancelacion normal: seguimos al "finally"
+                }
+                finally
+                {
+                    DrenarTodas(partida);
+
+                    if (partida.Estado == EstadoPartida.Finalizada)
+                    {
+                        try
+                        {
+                            GuardarResultadoFinal(partida);
+                        }
+                        catch (IOException)
+                        {
+                            // archivo ocupado por otro programa: no debe
+                            // tumbar el hilo (queda sin resultado_final.txt)
+                        }
+                    }
+                }
+            });
 
             return cts; // guárdenlo para poder llamar cts.Cancel() cuando termine la partida
+        }
+
+        private void DrenarTodas(Partida partida)
+        {
+            DrenarCola(partida.Jugador1.Nombre, partida.Jugador1.Eventos);
+            DrenarCola(partida.Jugador2.Nombre, partida.Jugador2.Eventos);
+            DrenarCola("Sistema", partida.Eventos);
         }
 
         private void DrenarCola(string nombreJugador, ConcurrentQueue<EventoJuego> cola)
         {
             while (cola.TryDequeue(out var evento))
             {
-                RegistrarEvento(nombreJugador, evento.Tipo, evento.Mensaje);
+                try
+                {
+                    RegistrarEvento(nombreJugador, evento.Tipo, evento.Mensaje);
+                }
+                catch (IOException)
+                {
+                    // El archivo estaba ocupado por otro programa (por ejemplo
+                    // abierto en un editor): se pierde ESE evento, pero el
+                    // hilo del log NO debe morir por eso.
+                }
             }
         }
     }
@@ -139,8 +193,7 @@ namespace ImperiosEnGuerra.Modelo
     //
     //   if (partida.VerificarGanador())
     //   {
-    //       archivos.GuardarResultadoFinal(partida);
-    //       cancelacionLog.Cancel();
+    //       cancelacionLog.Cancel();   // resultado_final.txt se guarda solo
     //   }
     // -------------------------------------------------------------------
 }

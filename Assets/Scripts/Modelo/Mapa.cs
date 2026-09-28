@@ -1,6 +1,7 @@
 using System;                        // Math.Abs / Math.Max (usados en la busqueda de celdas libres)
 using System.Collections.Concurrent; // ConcurrentDictionary: colecciones thread-safe
 using System.Collections.Generic;    // IReadOnlyDictionary
+using System.Linq;                   // OrderBy (IntentarPasoHacia)
 
 namespace ImperiosEnGuerra.Modelo
 {
@@ -151,6 +152,58 @@ namespace ImperiosEnGuerra.Modelo
             return recurso;
         }
 
+        // Busca el deposito NO agotado de ese tipo mas cercano a "origen"
+        // (distancia Manhattan, la misma que usa el resto del Modelo). Lo usan
+        // los aldeanos para saber a donde ir a recolectar. Devuelve false si
+        // ya no queda ningun deposito de ese tipo.
+        //
+        // Recorre el ConcurrentDictionary directamente: es seguro aunque otro
+        // hilo retire un deposito agotado al mismo tiempo (si eso pasa, el
+        // aldeano lo descubre al llegar y busca otro).
+        public bool TryBuscarRecursoCercano(TipoRecurso tipo, Posicion origen, out Posicion posicion, out Recurso recurso)
+        {
+            posicion = default;
+            recurso = null;
+            int menorDistancia = int.MaxValue;
+
+            foreach (var par in recursosEnMapa)
+            {
+                if (par.Value.Tipo != tipo || par.Value.EstaAgotado()) continue;
+
+                int distancia = origen.DistanciaManhattanHasta(par.Key);
+                if (distancia < menorDistancia)
+                {
+                    menorDistancia = distancia;
+                    posicion = par.Key;
+                    recurso = par.Value;
+                }
+            }
+
+            return recurso != null;
+        }
+
+        // Retira del mapa un deposito que ya se agoto, de forma ATOMICA y
+        // UNA SOLA VEZ: devuelve true solo para el hilo que realmente lo
+        // retiro. Cuando dos aldeanos rivales agotan el mismo deposito casi
+        // al mismo tiempo, ambos llaman esto, pero solo uno "gana" y anuncia
+        // el agotamiento (antes el aviso salia duplicado).
+        public bool TryRetirarRecursoAgotado(Posicion pos, Recurso recurso)
+        {
+            lock (candadoCeldas)
+            {
+                if (!recursosEnMapa.TryGetValue(pos, out var enCelda)
+                    || !ReferenceEquals(enCelda, recurso)
+                    || !recurso.EstaAgotado())
+                {
+                    return false;
+                }
+
+                recursosEnMapa.TryRemove(pos, out _);
+                MarcarCelda(pos, TipoCelda.Libre);
+                return true;
+            }
+        }
+
         // Vacia por completo una celda: quita cualquier Recurso, Edificio o
         // Unidad que estuviera registrada ahi (por si acaso mas de uno
         // quedo asociado por error) y la marca como Libre otra vez. Se usa,
@@ -267,6 +320,46 @@ namespace ImperiosEnGuerra.Modelo
                 unidad.MoverA(destino);
                 return true;
             }
+        }
+
+        // Da UN paso de la unidad hacia "destino". Prueba primero las celdas
+        // vecinas que ACERCAN (ordenadas de la mas a la menos cercana). Si
+        // todas estan ocupadas (otra unidad, un edificio, un recurso), a
+        // veces prueba tambien una que no acerque, para poder rodear el
+        // obstaculo en vez de quedarse trabada para siempre. Devuelve true si
+        // la unidad avanzo. MoverUnidad valida y ejecuta el paso de forma
+        // atomica.
+        //
+        // "aleatorio" es una funcion que devuelve un entero entre 0 y (max-1);
+        // se recibe de afuera porque System.Random no es thread-safe y cada
+        // llamador (aldeanos, tropas de la IA) ya tiene el suyo protegido.
+        // Antes este codigo era privado de JugadorIA; ahora lo comparten los
+        // aldeanos que caminan hacia los depositos y las tropas de la IA.
+        public bool IntentarPasoHacia(Unidad unidad, Posicion destino, Func<int, int> aleatorio)
+        {
+            var actual = unidad.Posicion;
+            int distanciaActual = actual.DistanciaManhattanHasta(destino);
+
+            var vecinos = new[]
+            {
+                new Posicion(actual.X + 1, actual.Y),
+                new Posicion(actual.X - 1, actual.Y),
+                new Posicion(actual.X, actual.Y + 1),
+                new Posicion(actual.X, actual.Y - 1),
+            }.OrderBy(p => p.DistanciaManhattanHasta(destino));
+
+            foreach (var siguiente in vecinos)
+            {
+                bool acerca = siguiente.DistanciaManhattanHasta(destino) < distanciaActual;
+
+                // Un paso que aleja solo se intenta 1 de cada 3 veces: asi
+                // rodea obstaculos sin ponerse a oscilar todo el tiempo.
+                if (!acerca && aleatorio(3) != 0) continue;
+
+                if (MoverUnidad(unidad, actual, siguiente)) return true;
+            }
+
+            return false;
         }
 
         // ---------- Muerte de unidades ----------

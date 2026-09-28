@@ -53,6 +53,12 @@ namespace ImperiosEnGuerra.Modelo
         public int VidaActual { get; private set; }
         public bool EstaViva => VidaActual > 0;
         public bool EstaDestruido => !EstaViva;
+
+        // Vida actual como fraccion entre 0.0 y 1.0. La calcula el MODELO (y no
+        // la Vista) porque cualquier interfaz que muestre la vida la necesita:
+        // la Vista solo aplica el numero. Siempre esta entre 0 y 1 porque
+        // RecibirDanio no baja de 0 y Curar no pasa de VidaMaxima.
+        public double PorcentajeVida => (double)VidaActual / VidaMaxima;
         public IReadOnlyDictionary<TipoRecurso, int> Costo { get; protected set; }
 
         // Aviso de "esta unidad acaba de morir". Se dispara UNA sola vez, en
@@ -117,36 +123,48 @@ namespace ImperiosEnGuerra.Modelo
             }
         }
 
-        public void MoverHacia(Mapa mapa, Posicion destino, ConcurrentQueue<EventoJuego> eventos, int intervaloMs = 300)
+        // Camina hacia "destino" en su propio hilo, una celda cada
+        // "intervaloMs". Espera con Task.Delay (no Thread.Sleep): mientras
+        // espera NO ocupa un hilo del pool. "token" permite detener el
+        // movimiento desde afuera (Jugador.DetenerHilos); si no se pasa,
+        // el hilo termina solo al llegar, quedar bloqueado o morir la unidad.
+        public void MoverHacia(Mapa mapa, Posicion destino, ConcurrentQueue<EventoJuego> eventos, int intervaloMs = 300, CancellationToken token = default)
         {
             if (mapa == null) return;
 
-            Task.Run(() =>
+            Task.Run(async () =>
             {
-                while (EstaViva && Posicion != destino)
+                try
                 {
-                    var actual = Posicion;
-                    int dx = Math.Sign(destino.X - actual.X);
-                    int dy = Math.Sign(destino.Y - actual.Y);
-
-                    var siguiente = dx != 0
-                        ? new Posicion(actual.X + dx, actual.Y)
-                        : new Posicion(actual.X, actual.Y + dy);
-
-                    bool avanzo = mapa.MoverUnidad(this, actual, siguiente);
-
-                    if (!avanzo)
+                    while (EstaViva && Posicion != destino)
                     {
-                        eventos?.Enqueue(new EventoJuego("Movimiento", $"{Nombre} bloqueado, no puede avanzar a {siguiente}."));
-                        break;
+                        var actual = Posicion;
+                        int dx = Math.Sign(destino.X - actual.X);
+                        int dy = Math.Sign(destino.Y - actual.Y);
+
+                        var siguiente = dx != 0
+                            ? new Posicion(actual.X + dx, actual.Y)
+                            : new Posicion(actual.X, actual.Y + dy);
+
+                        bool avanzo = mapa.MoverUnidad(this, actual, siguiente);
+
+                        if (!avanzo)
+                        {
+                            eventos?.Enqueue(new EventoJuego("Movimiento", $"{Nombre} bloqueado, no puede avanzar a {siguiente}."));
+                            break;
+                        }
+
+                        await Task.Delay(intervaloMs, token);
                     }
 
-                    Thread.Sleep(intervaloMs);
+                    if (Posicion == destino)
+                    {
+                        eventos?.Enqueue(new EventoJuego("Movimiento", $"{Nombre} llegó a {destino}."));
+                    }
                 }
-
-                if (Posicion == destino)
+                catch (OperationCanceledException)
                 {
-                    eventos?.Enqueue(new EventoJuego("Movimiento", $"{Nombre} llegó a {destino}."));
+                    // Cancelacion normal (fin de la partida): el hilo termina.
                 }
             });
         }

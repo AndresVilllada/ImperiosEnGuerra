@@ -31,6 +31,12 @@ namespace ImperiosEnGuerra.Vista
 
                 if (vistasDeRecursos.ContainsKey(recurso)) continue; // ya tiene su vista, no duplicar
 
+                // Un deposito agotado no se dibuja: en el instante entre que se
+                // agota y el aldeano lo retira del Mapa, todavia aparece en
+                // RecursosEnMapa, y sin esta linea se crearia su dibujo solo
+                // para destruirlo enseguida (ver ActualizarRecursos).
+                if (recurso.EstaAgotado()) continue;
+
                 GameObject prefab = ElegirPrefab(recurso.Tipo);
                 if (prefab == null) continue;
 

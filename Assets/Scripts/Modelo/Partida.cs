@@ -93,6 +93,23 @@ namespace ImperiosEnGuerra.Modelo
             }
         }
 
+        // ¿Gano ESTE jugador? Es una pregunta sobre el resultado de la
+        // partida, asi que la responde la Partida (antes el Controlador
+        // comparaba el nombre del ganador con el del jugador para decidir
+        // entre el panel de victoria y el de derrota). Solo es true si la
+        // partida ya termino y este jugador es el ganador: en un "Empate"
+        // es false para los dos, y mientras la partida sigue en curso
+        // tambien es false.
+        public bool GanoJugador(Jugador jugador)
+        {
+            lock (candado)
+            {
+                return Estado == EstadoPartida.Finalizada
+                    && jugador != null
+                    && Ganador == jugador.Nombre;
+            }
+        }
+
         // Un jugador esta derrotado si CUALQUIERA de las dos condiciones
         // que pide la guia se cumple (el "y/o" del enunciado): su Centro
         // Urbano fue destruido, O ya no le queda ninguna unidad militar

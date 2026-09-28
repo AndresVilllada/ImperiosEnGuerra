@@ -19,6 +19,13 @@ namespace ImperiosEnGuerra.Vista
         [SerializeField] private Sprite spritePiquero;
         [SerializeField] private Sprite spriteArquero;
 
+        // Velocidad (en unidades del mundo por segundo) con la que la unidad se
+        // DESLIZA hacia su celda. El Modelo mueve las unidades de celda en celda
+        // (un salto cada 300-400 ms); esto es solo presentacion: la Vista
+        // suaviza el salto para que se vea caminar en vez de teletransportarse.
+        [Header("Movimiento visual")]
+        [SerializeField] private float velocidadVisual = 6f;
+
         // Cuanto tarda (en segundos) el desvanecimiento al morir. Es solo
         // visual: el Modelo ya considera muerta a la unidad desde el primer
         // momento en que su vida llega a 0.
@@ -84,15 +91,18 @@ namespace ImperiosEnGuerra.Vista
             if (barraVidaFill != null)
             {
                 // Se parte de la escala ORIGINAL del prefab y solo se
-                // achica el eje X segun el porcentaje de vida.
+                // achica el eje X segun el porcentaje de vida. El numero (0 a
+                // 1) ya viene calculado por el Modelo (Unidad.PorcentajeVida):
+                // la Vista solo lo aplica, no hace la division.
                 var escala = escalaInicialFill;
-                float porcentajeVida = (float)UnidadModelo.VidaActual / UnidadModelo.VidaMaxima;
-                escala.x = escalaInicialFill.x * Mathf.Clamp01(porcentajeVida);
+                escala.x = escalaInicialFill.x * (float)UnidadModelo.PorcentajeVida;
                 barraVidaFill.localScale = escala;
             }
 
-            // Sincronizar posición actual en el mapa 2D
-            transform.position = new Vector3(UnidadModelo.Posicion.X + 0.5f, UnidadModelo.Posicion.Y + 0.5f, 0f);
+            // Sincronizar posición actual en el mapa 2D: la celda destino la da
+            // el Modelo, y la unidad se desliza hacia ella a "velocidadVisual".
+            var destino = new Vector3(UnidadModelo.Posicion.X + 0.5f, UnidadModelo.Posicion.Y + 0.5f, 0f);
+            transform.position = Vector3.MoveTowards(transform.position, destino, velocidadVisual * Time.deltaTime);
         }
 
         // Antes hacia Destroy(gameObject) de inmediato (la unidad
@@ -117,7 +127,11 @@ namespace ImperiosEnGuerra.Vista
 
             while (transcurrido < duracionDesvanecimiento)
             {
-                transcurrido += Time.deltaTime;
+                // unscaledDeltaTime (y no deltaTime): FinPartidaView pone
+                // Time.timeScale = 0 al mostrar victoria/derrota, y con deltaTime
+                // este desvanecimiento se quedaria congelado a medias justo en
+                // el momento en que cae el Centro Urbano.
+                transcurrido += Time.unscaledDeltaTime;
 
                 if (spriteRenderer != null)
                 {
