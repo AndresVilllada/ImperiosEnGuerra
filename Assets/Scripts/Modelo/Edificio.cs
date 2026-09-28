@@ -18,6 +18,13 @@ namespace ImperiosEnGuerra.Modelo
         public int ProgresoConstruccion { get; private set; } // 0-100
         public bool EstaDestruido => VidaActual <= 0;
         public IReadOnlyDictionary<TipoRecurso, int> Costo { get; protected set; }
+
+        // Aviso de "este edificio acaba de ser destruido". Se dispara UNA
+        // sola vez, en el momento exacto en que su vida pasa de mayor que 0
+        // a 0. Lo usa el Mapa para liberar la celda del edificio destruido
+        // (asi las ruinas no siguen bloqueando el espacio). El edificio no
+        // conoce al Mapa: solo avisa, y quien quiera enterarse se suscribe.
+        public event Action<Edificio> Destruido;
  
         // Candado propio de esta instancia: protege VidaActual y ProgresoConstruccion,
         // que se pueden tocar desde el hilo de construcción Y desde un ataque
@@ -42,9 +49,22 @@ namespace ImperiosEnGuerra.Modelo
         public void RecibirDanio(int cantidad)
         {
             if (cantidad < 0) throw new ArgumentException("El daño no puede ser negativo.", nameof(cantidad));
+
+            bool acabaDeSerDestruido = false;
             lock (candado)
             {
+                bool estabaEnPie = VidaActual > 0;
                 VidaActual = Math.Max(0, VidaActual - cantidad);
+                acabaDeSerDestruido = estabaEnPie && VidaActual == 0;
+            }
+
+            // El evento se dispara FUERA del lock: quien lo escucha (el Mapa)
+            // toma sus propios candados, y hacerlo con el candado de este
+            // edificio todavia tomado podria causar un interbloqueo
+            // (deadlock) entre hilos.
+            if (acabaDeSerDestruido)
+            {
+                Destruido?.Invoke(this);
             }
         }
  

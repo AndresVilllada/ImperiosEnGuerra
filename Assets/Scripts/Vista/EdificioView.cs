@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using ImperiosEnGuerra.Modelo;
  
@@ -17,8 +18,34 @@ namespace ImperiosEnGuerra.Vista
         [SerializeField] private Sprite spriteHouse;      // Edificio_Casa
         [SerializeField] private Sprite spriteTaller;     // Edificio_Cuartel
         [SerializeField] private Sprite spriteDefensa;    // Edificio_Torre
+
+        // Cuanto tarda (en segundos) el desvanecimiento al ser destruido.
+        // Es solo visual: el Modelo ya considera destruido al edificio desde
+        // el primer momento en que su vida llega a 0.
+        [Header("Animacion de destruccion")]
+        [SerializeField] private float duracionDesvanecimiento = 0.8f;
  
         public Edificio EdificioModelo { get; private set; }
+
+        // Evita iniciar el desvanecimiento mas de una vez: el Controlador
+        // llama ActualizarVisual() cada frame, y mientras dura la animacion
+        // el edificio sigue existiendo en la escena.
+        private bool destruyendose;
+
+        // Escala con la que el PREFAB diseño el relleno de la barra. Antes
+        // el codigo hacia escala.x = porcentaje (un valor entre 0 y 1), lo
+        // que reemplazaba la escala original del prefab (0.1 en las barras
+        // de las unidades) y dejaba la barra desproporcionada. Ahora se
+        // guarda la escala original y el porcentaje se MULTIPLICA por ella.
+        private Vector3 escalaInicialRelleno = Vector3.one;
+
+        private void Awake()
+        {
+            if (rellenoSalud != null)
+            {
+                escalaInicialRelleno = rellenoSalud.localScale;
+            }
+        }
  
         // Nuevo parámetro 'esDeIA' para teñir el edificio si es del enemigo
         public void Inicializar(Edificio edificio, bool esDeIA = false)
@@ -36,7 +63,9 @@ namespace ImperiosEnGuerra.Vista
  
         public void ActualizarVisual()
         {
-            if (EdificioModelo == null) return;
+            // Si ya esta en pleno desvanecimiento no hay nada mas que
+            // actualizar (ni barra, ni transparencia de construccion).
+            if (EdificioModelo == null || destruyendose) return;
 
             // Verificar si el edificio fue destruido
             if (EdificioModelo.EstaDestruido)
@@ -56,16 +85,18 @@ namespace ImperiosEnGuerra.Vista
 
             if (rellenoSalud != null)
             {
-                var escala = rellenoSalud.localScale;
+                // Se parte de la escala ORIGINAL del prefab y solo se
+                // achica el eje X (progreso de construccion o vida).
+                var escala = escalaInicialRelleno;
 
                 if (!listo)
                 {
-                    escala.x = Mathf.Clamp01(EdificioModelo.ProgresoConstruccion / 100f);
+                    escala.x = escalaInicialRelleno.x * Mathf.Clamp01(EdificioModelo.ProgresoConstruccion / 100f);
                 }
                 else
                 {
                     float porcentajeVida = (float)EdificioModelo.VidaActual / EdificioModelo.VidaMaxima;
-                    escala.x = Mathf.Clamp01(porcentajeVida);
+                    escala.x = escalaInicialRelleno.x * Mathf.Clamp01(porcentajeVida);
                 }
 
                 rellenoSalud.localScale = escala;
@@ -81,8 +112,40 @@ namespace ImperiosEnGuerra.Vista
             }
         }
 
+        // Antes hacia Destroy(gameObject) de inmediato (el edificio
+        // desaparecia de golpe). Ahora oculta la barra e inicia un
+        // desvanecimiento; el Destroy ocurre al terminar.
         private void ManejarDestruccion()
         {
+            destruyendose = true;
+
+            if (fondoBarra != null) fondoBarra.SetActive(false);
+
+            StartCoroutine(DesvanecerYDestruir());
+        }
+
+        // Baja el alfa del sprite de su valor actual hasta 0 durante
+        // "duracionDesvanecimiento" segundos, y despues destruye el
+        // GameObject. Se conserva el tinte del bando (solo cambia el alfa).
+        private IEnumerator DesvanecerYDestruir()
+        {
+            float transcurrido = 0f;
+            Color colorInicial = spriteRenderer != null ? spriteRenderer.color : Color.white;
+
+            while (transcurrido < duracionDesvanecimiento)
+            {
+                transcurrido += Time.deltaTime;
+
+                if (spriteRenderer != null)
+                {
+                    var color = colorInicial;
+                    color.a = Mathf.Lerp(colorInicial.a, 0f, transcurrido / duracionDesvanecimiento);
+                    spriteRenderer.color = color;
+                }
+
+                yield return null;
+            }
+
             Destroy(gameObject);
         }
  

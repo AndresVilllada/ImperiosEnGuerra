@@ -55,6 +55,13 @@ namespace ImperiosEnGuerra.Modelo
         public bool EstaDestruido => !EstaViva;
         public IReadOnlyDictionary<TipoRecurso, int> Costo { get; protected set; }
 
+        // Aviso de "esta unidad acaba de morir". Se dispara UNA sola vez, en
+        // el momento exacto en que su vida pasa de mayor que 0 a 0. Lo usa el
+        // Mapa para liberar la celda de la unidad muerta (asi los cadaveres
+        // no siguen bloqueando celdas). La unidad no conoce al Mapa: solo
+        // avisa, y quien quiera enterarse se suscribe.
+        public event Action<Unidad> Murio;
+
         private readonly object candado = new object();
 
         protected Unidad(string nombre, Posicion posicion, int vidaMaxima, IReadOnlyDictionary<TipoRecurso, int> costo)
@@ -72,9 +79,22 @@ namespace ImperiosEnGuerra.Modelo
         public void RecibirDanio(int cantidad)
         {
             if (cantidad < 0) throw new ArgumentException("El daño no puede ser negativo.", nameof(cantidad));
+
+            bool acabaDeMorir = false;
             lock (candado)
             {
+                bool estabaViva = VidaActual > 0;
                 VidaActual = Math.Max(0, VidaActual - cantidad);
+                acabaDeMorir = estabaViva && VidaActual == 0;
+            }
+
+            // El evento se dispara FUERA del lock: quien lo escucha (el Mapa)
+            // toma sus propios candados, y hacerlo con el candado de esta
+            // unidad todavia tomado podria causar un interbloqueo (deadlock)
+            // con Mapa.MoverUnidad, que toma los candados en orden contrario.
+            if (acabaDeMorir)
+            {
+                Murio?.Invoke(this);
             }
         }
 

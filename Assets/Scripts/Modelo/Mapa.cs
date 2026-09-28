@@ -1,3 +1,4 @@
+using System;                        // Math.Abs / Math.Max (usados en la busqueda de celdas libres)
 using System.Collections.Concurrent; // ConcurrentDictionary: colecciones thread-safe
 using System.Collections.Generic;    // IReadOnlyDictionary
 
@@ -78,6 +79,33 @@ namespace ImperiosEnGuerra.Modelo
             }
         }
 
+        // Busca la celda libre mas cercana a "origen", revisando anillos
+        // cada vez mas grandes alrededor (radio 1, luego 2, etc.) hasta
+        // encontrar una que CeldaLibre() acepte. Antes esta busqueda vivia
+        // en el GameController (PosicionLibreCercana), pero es LOGICA sobre
+        // el estado del mapa, asi que le corresponde al Modelo — el
+        // Controlador solo debe pedirla, no calcularla.
+        //
+        // No hace falta validar los limites aparte: CeldaLibre ya devuelve
+        // false para cualquier posicion fuera del mapa.
+        public Posicion BuscarCeldaLibreCercana(Posicion origen, int radioMaximo = 5)
+        {
+            for (int radio = 1; radio <= radioMaximo; radio++)
+            {
+                for (int dx = -radio; dx <= radio; dx++)
+                {
+                    for (int dy = -radio; dy <= radio; dy++)
+                    {
+                        if (Math.Max(Math.Abs(dx), Math.Abs(dy)) != radio) continue; // solo el borde del anillo
+
+                        var candidata = new Posicion(origen.X + dx, origen.Y + dy);
+                        if (CeldaLibre(candidata)) return candidata;
+                    }
+                }
+            }
+            return origen; // fallback improbable: no habia ninguna celda libre cerca
+        }
+
         // Devuelve QUE TIPO de cosa hay en una celda (sin la referencia al
         // objeto en si, solo la categoria general).
         public TipoCelda ObtenerTipoCelda(Posicion pos)
@@ -143,6 +171,7 @@ namespace ImperiosEnGuerra.Modelo
             if (!EstaDentroDelMapa(pos)) return;
             edificiosEnMapa[pos] = edificio;
             MarcarCelda(pos, TipoCelda.Edificio);
+            SuscribirDestruccion(edificio);
         }
 
         public Edificio ObtenerEdificio(Posicion pos)
@@ -158,6 +187,47 @@ namespace ImperiosEnGuerra.Modelo
             if (!EstaDentroDelMapa(pos)) return;
             unidadesEnMapa[pos] = unidad;
             MarcarCelda(pos, TipoCelda.Unidad);
+            SuscribirMuerte(unidad);
+        }
+
+        // Coloca una Unidad en la celda libre mas cercana a "origen" (o en el
+        // propio "origen" si esta libre) de forma ATOMICA: buscar la celda y
+        // ocuparla ocurre dentro del mismo lock, asi dos hilos que entrenan
+        // tropas al mismo tiempo (EntrenarLote lanza 5 a la vez) nunca eligen
+        // la misma celda. Antes las 5 tropas de un lote se colocaban todas en
+        // la MISMA celda: quedaban apiladas y parecia que una sola tropa
+        // tenia varias barras de vida. Tambien actualiza la posicion interna
+        // de la unidad (unidad.MoverA). Devuelve false si no hay ninguna
+        // celda libre dentro del radio.
+        public bool TryColocarUnidadCerca(Posicion origen, Unidad unidad, out Posicion colocada, int radioMaximo = 5)
+        {
+            lock (candadoCeldas)
+            {
+                for (int radio = 0; radio <= radioMaximo; radio++)
+                {
+                    for (int dx = -radio; dx <= radio; dx++)
+                    {
+                        for (int dy = -radio; dy <= radio; dy++)
+                        {
+                            if (Math.Max(Math.Abs(dx), Math.Abs(dy)) != radio) continue; // solo el borde del anillo (radio 0 = el propio origen)
+
+                            var candidata = new Posicion(origen.X + dx, origen.Y + dy);
+                            if (!CeldaLibre(candidata)) continue; // el lock es reentrante: mismo hilo, no hay deadlock
+
+                            unidadesEnMapa[candidata] = unidad;
+                            MarcarCelda(candidata, TipoCelda.Unidad);
+                            unidad.MoverA(candidata);
+                            SuscribirMuerte(unidad);
+
+                            colocada = candidata;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            colocada = origen;
+            return false;
         }
 
         public Unidad ObtenerUnidad(Posicion pos)
@@ -173,18 +243,88 @@ namespace ImperiosEnGuerra.Modelo
         // (unidad.MoverA). Esta coordinacion vive aqui, en el Mapa, y no en
         // Unidad.MoverHacia, porque el Mapa es el unico que conoce el
         // estado de TODAS las celdas a la vez.
+        //
+        // Ahora TODO el metodo va dentro de un lock (antes eran pasos
+        // sueltos): asi una unidad que muere justo mientras se mueve no
+        // puede "resucitar" su celda, y dos unidades no pueden reclamar el
+        // mismo destino a la vez.
         public bool MoverUnidad(Unidad unidad, Posicion origen, Posicion destino)
         {
-            if (!EstaDentroDelMapa(destino) || !CeldaLibre(destino)) return false;
+            lock (candadoCeldas)
+            {
+                // Una unidad muerta ya no se mueve: su celda fue liberada al
+                // morir (ver LiberarPorMuerte) y no debe volver a ocuparse.
+                if (!unidad.EstaViva) return false;
 
-            unidadesEnMapa.TryRemove(origen, out _);
-            MarcarCelda(origen, TipoCelda.Libre);
+                if (!EstaDentroDelMapa(destino) || !CeldaLibre(destino)) return false;
 
-            unidadesEnMapa[destino] = unidad;
-            MarcarCelda(destino, TipoCelda.Unidad);
+                unidadesEnMapa.TryRemove(origen, out _);
+                MarcarCelda(origen, TipoCelda.Libre);
 
-            unidad.MoverA(destino);
-            return true;
+                unidadesEnMapa[destino] = unidad;
+                MarcarCelda(destino, TipoCelda.Unidad);
+
+                unidad.MoverA(destino);
+                return true;
+            }
+        }
+
+        // ---------- Muerte de unidades ----------
+
+        // Se suscribe al aviso "Murio" de la unidad. Se quita antes de
+        // agregar para que, si por alguna razon se llama dos veces con la
+        // misma unidad, el aviso no quede duplicado.
+        private void SuscribirMuerte(Unidad unidad)
+        {
+            unidad.Murio -= LiberarPorMuerte;
+            unidad.Murio += LiberarPorMuerte;
+        }
+
+        // Cuando una unidad muere, su celda queda libre otra vez. La unidad
+        // SIGUE en Jugador.Unidades (la condicion de victoria necesita
+        // saber que alguna vez tuvo tropas); lo unico que se libera es el
+        // espacio fisico del mapa. Solo se libera si la celda sigue
+        // registrada a nombre de ESTA unidad (evita borrar a otra que ya
+        // se haya movido ahi).
+        private void LiberarPorMuerte(Unidad unidad)
+        {
+            lock (candadoCeldas)
+            {
+                var pos = unidad.Posicion;
+                if (unidadesEnMapa.TryGetValue(pos, out var enCelda) && ReferenceEquals(enCelda, unidad))
+                {
+                    unidadesEnMapa.TryRemove(pos, out _);
+                    MarcarCelda(pos, TipoCelda.Libre);
+                }
+            }
+        }
+
+        // ---------- Destruccion de edificios ----------
+
+        // Mismo patron que SuscribirMuerte, pero para el aviso "Destruido"
+        // de un Edificio.
+        private void SuscribirDestruccion(Edificio edificio)
+        {
+            edificio.Destruido -= LiberarPorDestruccion;
+            edificio.Destruido += LiberarPorDestruccion;
+        }
+
+        // Cuando un edificio es destruido, su celda queda libre otra vez
+        // (ya se puede construir o caminar por ahi). El edificio SIGUE en
+        // Jugador.Edificios: Jugador.CentroUrbanoDestruido() lo necesita
+        // para saber si el Centro Urbano cayo y definir al ganador; lo
+        // unico que se libera es el espacio fisico del mapa.
+        private void LiberarPorDestruccion(Edificio edificio)
+        {
+            lock (candadoCeldas)
+            {
+                var pos = edificio.Posicion;
+                if (edificiosEnMapa.TryGetValue(pos, out var enCelda) && ReferenceEquals(enCelda, edificio))
+                {
+                    edificiosEnMapa.TryRemove(pos, out _);
+                    MarcarCelda(pos, TipoCelda.Libre);
+                }
+            }
         }
     }
 }
